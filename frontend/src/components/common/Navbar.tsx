@@ -102,6 +102,7 @@ const Navbar = () => {
             }`}
           />
         </button>
+        <Link to="/admin/lawyer-management" className="text-sm">Lawyer management</Link>
       </nav>
 
       {/* Mobile menu */}

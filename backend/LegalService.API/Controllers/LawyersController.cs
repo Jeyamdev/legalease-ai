@@ -2,6 +2,7 @@ using System;
 using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
 using LegalService.API.Authentication.Services;
 using LegalService.API.Data;
@@ -33,7 +34,8 @@ public class LawyersController : ControllerBase
     /// Get all lawyers, optionally filtered by specialization name, ID, or text search.
     /// </summary>
     [HttpGet]
-    public async Task<IActionResult> GetLawyers([FromQuery] string? specialization, [FromQuery] string? search)
+    [HttpGet("search")]
+    public async Task<IActionResult> GetLawyers([FromQuery] string? specialization, [FromQuery] string? search, [FromQuery] DateOnly? date = null)
     {
         var query = _context.Lawyers
             .Include(l => l.LawyerSpecializations)
@@ -66,6 +68,10 @@ public class LawyersController : ControllerBase
                 l.LicenseNumber.ToLower().Contains(s) ||
                 l.LawyerSpecializations.Any(ls => ls.Specialization.Name.ToLower().Contains(s)));
         }
+
+        if (date.HasValue)
+            query = query.Where(l => l.Status == "Active" && l.LawyerAvailabilities.Any(a =>
+                a.Date == date.Value && a.AvailabilitySlots.Any(slot => !slot.IsBooked)));
 
         var lawyers = await query
             .OrderBy(l => l.Name)
@@ -102,6 +108,7 @@ public class LawyersController : ControllerBase
             .Include(l => l.LawyerSpecializations)
                 .ThenInclude(ls => ls.Specialization)
             .AsNoTracking()
+            .Include(l => l.LawyerLegalServices).ThenInclude(ls => ls.LegalService)
             .FirstOrDefaultAsync(l => l.LawyerId == id);
 
         if (lawyer == null)
@@ -118,6 +125,11 @@ public class LawyersController : ControllerBase
             licenseNumber = lawyer.LicenseNumber,
             profileDescription = lawyer.ProfileDescription,
             status = lawyer.Status,
+            legalServices = lawyer.LawyerLegalServices.Select(ls => new
+            {
+                legalServiceId = ls.LegalServiceId, serviceName = ls.LegalService.ServiceName,
+                description = ls.LegalService.Description, category = ls.LegalService.Category
+            }).ToList(),
             specializations = lawyer.LawyerSpecializations.Select(ls => new
             {
                 specializationId = ls.SpecializationId,
@@ -170,6 +182,7 @@ public class LawyersController : ControllerBase
     /// Add a new lawyer with one designated specialization category and create their login account.
     /// </summary>
     [HttpPost]
+    [Authorize(Roles = "Admin")]
     public async Task<IActionResult> CreateLawyer([FromBody] CreateLawyerRequest request)
     {
         if (!ModelState.IsValid)
@@ -190,42 +203,13 @@ public class LawyersController : ControllerBase
             return Conflict(new { message = $"A lawyer with Bar/License number '{request.LicenseNumber}' already exists." });
         }
 
-        // 3. Resolve the single category specialization
-        var requestedCategory = request.Category.Trim();
-        var specialization = await _context.Specializations
-            .FirstOrDefaultAsync(s => s.Name.ToLower() == requestedCategory.ToLower());
+        if (await _context.Users.AnyAsync(u => u.Email.ToLower() == normalizedEmail) ||
+            await _context.Clerks.AnyAsync(c => c.Email != null && c.Email.ToLower() == normalizedEmail))
+            return Conflict(new { message = "This email already belongs to an account." });
 
+        var specialization = await ResolveSpecialization(request);
         if (specialization == null)
-        {
-            // Try matching allowed categories
-            var matchedCategory = DbInitializer.AllowedCategories
-                .FirstOrDefault(c => c.Equals(requestedCategory, StringComparison.OrdinalIgnoreCase) ||
-                                     c.IndexOf(requestedCategory, StringComparison.OrdinalIgnoreCase) >= 0);
-
-            if (matchedCategory != null)
-            {
-                specialization = await _context.Specializations
-                    .FirstOrDefaultAsync(s => s.Name.ToLower() == matchedCategory.ToLower());
-
-                if (specialization == null)
-                {
-                    specialization = new Specialization
-                    {
-                        Name = matchedCategory,
-                        Description = $"Specialized legal counsel in {matchedCategory}."
-                    };
-                    _context.Specializations.Add(specialization);
-                    await _context.SaveChangesAsync();
-                }
-            }
-            else
-            {
-                return BadRequest(new
-                {
-                    message = $"Invalid category '{requestedCategory}'. Allowed categories are: {string.Join(", ", DbInitializer.AllowedCategories)}"
-                });
-            }
-        }
+            return BadRequest(new { message = "Select an existing specialization." });
 
         // 4. Create Lawyer record
         var lawyer = new Lawyer
@@ -252,34 +236,15 @@ public class LawyersController : ControllerBase
             SpecializationId = specialization.SpecializationId
         });
 
-        // 6. Create or update User credentials so the lawyer can log in
+        // 6. Create a new Lawyer account; never repurpose an existing identity.
         var initialPassword = !string.IsNullOrWhiteSpace(request.Password) ? request.Password : "LawyerPassword123!";
         var passwordHash = _passwordService.HashPassword(initialPassword);
 
-        var existingUser = await _context.Users.FirstOrDefaultAsync(u => u.Email.ToLower() == normalizedEmail);
-        if (existingUser == null)
+        _context.Users.Add(new User
         {
-            var user = new User
-            {
-                Name = lawyer.Name,
-                Email = normalizedEmail,
-                Role = "Lawyer",
-                PasswordHash = passwordHash,
-                CreatedAt = DateTime.UtcNow,
-                UpdatedAt = DateTime.UtcNow
-            };
-            _context.Users.Add(user);
-        }
-        else
-        {
-            existingUser.Role = "Lawyer";
-            existingUser.Name = lawyer.Name;
-            if (!string.IsNullOrWhiteSpace(request.Password))
-            {
-                existingUser.PasswordHash = passwordHash;
-            }
-            existingUser.UpdatedAt = DateTime.UtcNow;
-        }
+            Name = lawyer.Name, Email = normalizedEmail, Role = "Lawyer",
+            PasswordHash = passwordHash, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow
+        });
 
         await _context.SaveChangesAsync();
 
@@ -312,6 +277,7 @@ public class LawyersController : ControllerBase
     /// Delete a lawyer and their associated schedules and records.
     /// </summary>
     [HttpDelete("{id:guid}")]
+    [Authorize(Roles = "Admin")]
     public async Task<IActionResult> DeleteLawyer(Guid id)
     {
         var lawyer = await _context.Lawyers
@@ -323,13 +289,13 @@ public class LawyersController : ControllerBase
         if (lawyer == null)
             return NotFound(new { message = $"Lawyer with ID '{id}' not found." });
 
-        // Check if there are active appointments
-        var hasActiveAppointments = await _context.Appointments
-            .AnyAsync(a => a.LawyerId == id && (a.Status == "Requested" || a.Status == "Confirmed"));
+        // Preserve all appointment history and the booking module's restrictive foreign keys.
+        var hasAppointments = await _context.Appointments
+            .AnyAsync(a => a.LawyerId == id);
 
-        if (hasActiveAppointments)
+        if (hasAppointments)
         {
-            return BadRequest(new { message = "Cannot delete lawyer with pending or confirmed appointments. Please reassign or cancel consultations first." });
+            return Conflict(new { message = "Cannot delete a lawyer with appointment history." });
         }
 
         // Remove slots & availabilities
@@ -352,6 +318,7 @@ public class LawyersController : ControllerBase
     /// Get all law specializations with lawyer counts.
     /// </summary>
     [HttpGet("specializations")]
+    [HttpGet("/api/specializations")]
     public async Task<IActionResult> GetSpecializations()
     {
         var specializations = await _context.Specializations
@@ -389,4 +356,80 @@ public class LawyersController : ControllerBase
         var slots = await _appointmentService.GetAvailableSlotsAsync(id, queryDate);
         return Ok(slots);
     }
+    private Task<Specialization?> ResolveSpecialization(UpdateLawyerRequest request)
+    {
+        if (request.SpecializationId.HasValue)
+            return _context.Specializations.SingleOrDefaultAsync(s => s.SpecializationId == request.SpecializationId);
+        var name = (request.Category ?? "").Trim().ToLowerInvariant();
+        return _context.Specializations.SingleOrDefaultAsync(s => s.Name.ToLower() == name);
+    }
+
+    [HttpPut("{id:guid}")]
+    [Authorize(Roles = "Admin")]
+    public async Task<IActionResult> UpdateLawyer(Guid id, UpdateLawyerRequest request)
+    {
+        if (!ModelState.IsValid) return BadRequest(ModelState);
+        var lawyer = await _context.Lawyers.Include(l => l.LawyerSpecializations)
+            .SingleOrDefaultAsync(l => l.LawyerId == id);
+        if (lawyer == null) return NotFound(new { message = "Lawyer not found." });
+        var specialization = await ResolveSpecialization(request);
+        if (specialization == null) return BadRequest(new { message = "Select an existing specialization." });
+        var email = request.Email.Trim().ToLowerInvariant();
+        var license = request.LicenseNumber.Trim().ToUpperInvariant();
+        var previousEmail = lawyer.Email?.ToLowerInvariant();
+        var account = await _context.Users.SingleOrDefaultAsync(u => u.Email.ToLower() == previousEmail);
+        if (account != null && account.Role != "Lawyer")
+            return Conflict(new { message = "The linked account is not a Lawyer account. Resolve the account association first." });
+        var linkedAccountId = account?.UserId ?? -1;
+        if (await _context.Lawyers.AnyAsync(l => l.LawyerId != id && l.Email != null && l.Email.ToLower() == email) ||
+            await _context.Users.AnyAsync(u => u.Email.ToLower() == email && u.UserId != linkedAccountId) ||
+            await _context.Clerks.AnyAsync(c => c.Email != null && c.Email.ToLower() == email))
+            return Conflict(new { message = "This email already belongs to another account." });
+        if (await _context.Lawyers.AnyAsync(l => l.LawyerId != id && l.LicenseNumber.ToUpper() == license))
+            return Conflict(new { message = "This license number already belongs to another lawyer." });
+
+        lawyer.Name = request.Name.Trim();
+        lawyer.Email = email;
+        lawyer.PhoneNumber = request.PhoneNumber?.Trim() ?? "";
+        lawyer.Qualification = request.Qualification?.Trim() ?? "";
+        lawyer.Experience = request.Experience;
+        lawyer.LicenseNumber = request.LicenseNumber.Trim();
+        lawyer.ProfileDescription = request.ProfileDescription?.Trim() ?? "";
+        lawyer.UpdatedAt = DateTime.UtcNow;
+        _context.LawyerSpecializations.RemoveRange(lawyer.LawyerSpecializations.Where(s => s.SpecializationId != specialization.SpecializationId));
+        if (!lawyer.LawyerSpecializations.Any(s => s.SpecializationId == specialization.SpecializationId))
+            _context.LawyerSpecializations.Add(new LawyerSpecialization { LawyerId = id, SpecializationId = specialization.SpecializationId });
+        if (account != null)
+        {
+            account.Name = lawyer.Name;
+            account.Email = email;
+            account.UpdatedAt = DateTime.UtcNow;
+        }
+        await _context.SaveChangesAsync();
+        // Reload after relationship changes so the response reflects only current assignments.
+        _context.ChangeTracker.Clear();
+        return await GetLawyerById(id);
+    }
+
+    [HttpGet("{id:guid}/availability")]
+    public async Task<IActionResult> GetAvailability(Guid id, [FromQuery] DateOnly? date = null)
+    {
+        var lawyer = await _context.Lawyers.AsNoTracking().SingleOrDefaultAsync(l => l.LawyerId == id);
+        if (lawyer == null) return NotFound(new { message = "Lawyer not found." });
+        var query = _context.AvailabilitySlots.AsNoTracking().Where(s =>
+            s.LawyerAvailability.LawyerId == id && !s.IsBooked && lawyer.Status == "Active");
+        if (date.HasValue) query = query.Where(s => s.LawyerAvailability.Date == date.Value);
+        else
+        {
+            var today = DateOnly.FromDateTime(DateTime.UtcNow);
+            query = query.Where(s => s.LawyerAvailability.Date >= today);
+        }
+        return Ok(await query.OrderBy(s => s.LawyerAvailability.Date).ThenBy(s => s.StartTime)
+            .Select(s => new LegalService.API.DTOs.Appointments.AvailabilitySlotResponse
+            {
+                SlotId = s.SlotId, AvailabilityId = s.AvailabilityId, Date = s.LawyerAvailability.Date,
+                StartTime = s.StartTime, EndTime = s.EndTime, IsBooked = s.IsBooked
+            }).ToListAsync());
+    }
+
 }

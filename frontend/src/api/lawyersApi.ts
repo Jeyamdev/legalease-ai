@@ -28,34 +28,43 @@ export interface CreateLawyerPayload {
   licenseNumber: string;
   profileDescription?: string;
   category: string;
+  specializationId?: number;
   password?: string;
 }
 
-export const LAWYER_CATEGORIES = [
-  "Corporate & Commercial Law",
-  "Criminal Law",
-  "Real Estate & Property Law",
-  "Labour & Employment Law",
-  "Tax Law",
-] as const;
+export type UpdateLawyerPayload = Omit<CreateLawyerPayload, "password">;
 
 export const lawyersApi = {
-  getLawyers: async (specialization?: string, search?: string): Promise<Lawyer[]> => {
+  getLawyers: async (specialization?: string, search?: string, date?: string): Promise<Lawyer[]> => {
     const params: Record<string, string> = {};
     if (specialization && specialization !== "All") params.specialization = specialization;
     if (search) params.search = search;
+    if (date) params.date = date;
     const res = await apiClient.get<Lawyer[]>("/api/lawyers", { params });
     return res.data;
   },
 
   getSpecializations: async () => {
-    const res = await apiClient.get("/api/lawyers/specializations");
+    const res = await apiClient.get<LawyerSpecialization[]>("/api/specializations");
     return res.data;
   },
 
   createLawyer: async (payload: CreateLawyerPayload): Promise<Lawyer> => {
     const res = await apiClient.post<Lawyer>("/api/lawyers", payload);
     return res.data;
+  },
+
+  updateLawyer: async (id: string, payload: UpdateLawyerPayload): Promise<Lawyer> => {
+    const res = await apiClient.put<Lawyer>(`/api/lawyers/${id}`, payload);
+    return res.data;
+  },
+
+  saveSpecialization: async (payload: { name: string; description: string }, id?: number) => {
+    if (id) await apiClient.put(`/api/specializations/${id}`, payload);
+    else await apiClient.post("/api/specializations", payload);
+  },
+  deleteSpecialization: async (id: number) => {
+    await apiClient.delete(`/api/specializations/${id}`);
   },
 
   deleteLawyer: async (id: string): Promise<{ message: string }> => {

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import '../../config/app_theme.dart';
 import '../../models/lawyer.dart';
@@ -6,6 +7,8 @@ import '../../services/lawyer_service.dart';
 import 'book_appointment_screen.dart';
 import 'scheduling_agent_screen.dart';
 import 'recommendation_screen.dart';
+import 'lawyer_profile_screen.dart';
+import 'specialization_details_screen.dart';
 
 class LawyersScreen extends StatefulWidget {
   final String? initialCategory;
@@ -22,15 +25,13 @@ class _LawyersScreenState extends State<LawyersScreen> {
   String? _error;
   String _selectedCategory = 'All';
   String _searchQuery = '';
+  final _searchController = TextEditingController();
+  Timer? _searchDebounce;
 
-  final List<String> _categories = [
-    'All',
-    'Corporate & Commercial Law',
-    'Criminal Law',
-    'Real Estate & Property Law',
-    'Labour & Employment Law',
-    'Tax Law',
-  ];
+  List<LawyerSpecialization> _specializations = [];
+  List<String> get _categories => ['All', ..._specializations.map((s) => s.name)];
+  DateTime? _availableDate;
+  int _loadVersion = 0;
 
   @override
   void initState() {
@@ -41,25 +42,38 @@ class _LawyersScreenState extends State<LawyersScreen> {
     _loadLawyers();
   }
 
+  @override
+  void dispose() {
+    _searchDebounce?.cancel();
+    _searchController.dispose();
+    super.dispose();
+  }
+
   Future<void> _loadLawyers() async {
+    final version = ++_loadVersion;
     setState(() {
       _loading = true;
       _error = null;
     });
 
     try {
+      final catalog = await LawyerService.getSpecializations();
+      final selected = catalog.where((s) => s.name == _selectedCategory).firstOrNull;
       final list = await LawyerService.getLawyers(
-        specialization: _selectedCategory == 'All' ? null : _selectedCategory,
+        specialization: selected?.specializationId.toString(),
         search: _searchQuery.isNotEmpty ? _searchQuery : null,
+        date: _availableDate?.toIso8601String().substring(0, 10),
       );
-      if (mounted) {
+      if (mounted && version == _loadVersion) {
         setState(() {
           _lawyers = list;
+          _specializations = catalog;
+          if (selected == null) _selectedCategory = 'All';
           _loading = false;
         });
       }
     } catch (e) {
-      if (mounted) {
+      if (mounted && version == _loadVersion) {
         setState(() {
           _error = 'Failed to load lawyers: $e';
           _loading = false;
@@ -88,6 +102,10 @@ class _LawyersScreenState extends State<LawyersScreen> {
   }
 
   Future<void> _showAddLawyerDialog() async {
+    if (_specializations.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Load or add a specialization in the Admin dashboard first.')));
+      return;
+    }
     final formKey = GlobalKey<FormState>();
     final nameCtrl = TextEditingController();
     final emailCtrl = TextEditingController();
@@ -98,7 +116,7 @@ class _LawyersScreenState extends State<LawyersScreen> {
     final passCtrl = TextEditingController(text: 'LawyerPassword123!');
     final descCtrl = TextEditingController();
 
-    String selectedCat = _selectedCategory != 'All' ? _selectedCategory : LawyerService.categories.first;
+    String selectedCat = _selectedCategory != 'All' ? _selectedCategory : _specializations.first.name;
     bool isSaving = false;
     String? modalError;
 
@@ -183,7 +201,7 @@ class _LawyersScreenState extends State<LawyersScreen> {
                         child: DropdownButton<String>(
                           isExpanded: true,
                           value: selectedCat,
-                          items: LawyerService.categories.map((c) {
+                          items: _specializations.map((s) => s.name).map((c) {
                             return DropdownMenuItem<String>(
                               value: c,
                               child: Text(c, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
@@ -284,6 +302,7 @@ class _LawyersScreenState extends State<LawyersScreen> {
                           licenseNumber: licCtrl.text.trim(),
                           profileDescription: descCtrl.text.trim(),
                           category: selectedCat,
+                          specializationId: _specializations.firstWhere((s) => s.name == selectedCat).specializationId,
                           password: passCtrl.text.trim(),
                         );
                         if (!mounted) return;
@@ -373,10 +392,13 @@ class _LawyersScreenState extends State<LawyersScreen> {
               children: [
                 // Search bar
                 TextField(
+                  controller: _searchController,
                   onChanged: (val) {
                     setState(() => _searchQuery = val);
+                    _searchDebounce?.cancel();
+                    _searchDebounce = Timer(const Duration(milliseconds: 300), _loadLawyers);
                   },
-                  onSubmitted: (_) => _loadLawyers(),
+                  onSubmitted: (_) { _searchDebounce?.cancel(); _loadLawyers(); },
                   decoration: InputDecoration(
                     hintText: 'Search lawyer by name, practice...',
                     prefixIcon: const Icon(Icons.search, size: 20, color: AppTheme.textMuted),
@@ -384,6 +406,8 @@ class _LawyersScreenState extends State<LawyersScreen> {
                         ? IconButton(
                             icon: const Icon(Icons.clear, size: 18),
                             onPressed: () {
+                              _searchDebounce?.cancel();
+                              _searchController.clear();
                               setState(() => _searchQuery = '');
                               _loadLawyers();
                             },
@@ -458,6 +482,25 @@ class _LawyersScreenState extends State<LawyersScreen> {
                 ),
                 const SizedBox(height: 12),
 
+                Row(children: [
+                  OutlinedButton.icon(icon: const Icon(Icons.calendar_today),
+                    label: Text(_availableDate == null ? 'Filter by availability' : _availableDate!.toIso8601String().substring(0, 10)),
+                    onPressed: () async {
+                      final picked = await showDatePicker(context: context, initialDate: _availableDate ?? DateTime.now(),
+                        firstDate: DateTime.now(), lastDate: DateTime.now().add(const Duration(days: 730)));
+                      if (!mounted || picked == null) return;
+                      setState(() => _availableDate = picked);
+                      _loadLawyers();
+                    }),
+                  if (_availableDate != null) IconButton(tooltip: 'Clear availability filter', icon: const Icon(Icons.clear),
+                    onPressed: () { setState(() => _availableDate = null); _loadLawyers(); }),
+                ]),
+                if (_selectedCategory != 'All') TextButton(
+                  onPressed: () {
+                    final specialization = _specializations.where((s) => s.name == _selectedCategory).firstOrNull;
+                    if (specialization != null) Navigator.push(context, MaterialPageRoute(
+                      builder: (_) => SpecializationDetailsScreen(specialization: specialization)));
+                  }, child: const Text('View specialization details')),
                 // Types of laws tabs
                 const Text(
                   'TYPES OF LAWS',
@@ -554,7 +597,10 @@ class _LawyersScreenState extends State<LawyersScreen> {
                             separatorBuilder: (context, index) => const SizedBox(height: 16),
                             itemBuilder: (context, index) {
                               final lawyer = _filteredLawyers[index];
-                              return _buildLawyerCard(lawyer);
+                              return Semantics(button: true, label: 'View profile of ${lawyer.name}',
+                                child: InkWell(onTap: () => Navigator.push(context, MaterialPageRoute(
+                                  builder: (_) => LawyerProfileScreen(lawyerId: lawyer.lawyerId))),
+                                  child: _buildLawyerCard(lawyer)));
                             },
                           ),
           ),
@@ -690,7 +736,7 @@ class _LawyersScreenState extends State<LawyersScreen> {
             width: double.infinity,
             child: ElevatedButton.icon(
               icon: const Icon(Icons.calendar_month, size: 16),
-              label: const Text('Book Consultation'),
+              label: Text(lawyer.status == 'Active' ? 'Book Consultation' : 'Unavailable'),
               style: ElevatedButton.styleFrom(
                 backgroundColor: AppTheme.gold,
                 foregroundColor: AppTheme.primaryNavy,
@@ -698,7 +744,7 @@ class _LawyersScreenState extends State<LawyersScreen> {
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                 elevation: 0,
               ),
-              onPressed: () {
+              onPressed: lawyer.status != 'Active' ? null : () {
                 Navigator.push(
                   context,
                   MaterialPageRoute(

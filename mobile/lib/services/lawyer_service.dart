@@ -2,16 +2,8 @@ import '../models/lawyer.dart';
 import 'api_client.dart';
 
 class LawyerService {
-  static const List<String> categories = [
-    'Corporate & Commercial Law',
-    'Criminal Law',
-    'Real Estate & Property Law',
-    'Labour & Employment Law',
-    'Tax Law',
-  ];
-
   /// Fetch list of lawyers, optionally filtered by specialization name, id, or search text.
-  static Future<List<Lawyer>> getLawyers({String? specialization, String? search}) async {
+  static Future<List<Lawyer>> getLawyers({String? specialization, String? search, String? date}) async {
     final query = <String, String>{};
     if (specialization != null && specialization.isNotEmpty && specialization != 'All') {
       query['specialization'] = specialization;
@@ -20,6 +12,7 @@ class LawyerService {
       query['search'] = search.trim();
     }
 
+    if (date != null && date.isNotEmpty) query['date'] = date;
     final response = await ApiClient.get('/api/lawyers', queryParams: query.isNotEmpty ? query : null);
     if (response is List) {
       return response.map((item) => Lawyer.fromJson(item as Map<String, dynamic>)).toList();
@@ -50,6 +43,7 @@ class LawyerService {
     String? profileDescription,
     required String category,
     String? password,
+    int? specializationId,
   }) async {
     final payload = {
       'name': name.trim(),
@@ -60,6 +54,7 @@ class LawyerService {
       'licenseNumber': licenseNumber.trim(),
       'profileDescription': profileDescription?.trim(),
       'category': category.trim(),
+      if (specializationId != null) 'specializationId': specializationId,
       'password': password?.trim(),
     };
 
@@ -69,11 +64,18 @@ class LawyerService {
 
   /// Fetch law specializations.
   static Future<List<LawyerSpecialization>> getSpecializations() async {
-    final response = await ApiClient.get('/api/lawyers/specializations');
+    final response = await ApiClient.get('/api/specializations');
     if (response is List) {
       return response.map((item) => LawyerSpecialization.fromJson(item as Map<String, dynamic>)).toList();
     }
     return [];
+  }
+
+  /// Read recorded unbooked availability without generating booking slots.
+  static Future<List<AvailabilitySlot>> getRecordedAvailability(String lawyerId, {String? date}) async {
+    final response = await ApiClient.get('/api/lawyers/$lawyerId/availability',
+      queryParams: date == null ? null : {'date': date});
+    return (response as List).map((item) => AvailabilitySlot.fromJson(item as Map<String, dynamic>)).toList();
   }
 
   /// Fetch the 30-minute afternoon slots (3:00 - 5:00 PM) for the specified date.

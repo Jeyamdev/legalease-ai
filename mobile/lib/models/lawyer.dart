@@ -81,6 +81,7 @@ class Lawyer {
   final String profileDescription;
   final String status;
   final List<LawyerSpecialization> specializations;
+  final List<LawyerLegalService> legalServices;
 
   const Lawyer({
     required this.lawyerId,
@@ -93,6 +94,7 @@ class Lawyer {
     required this.profileDescription,
     required this.status,
     required this.specializations,
+    this.legalServices = const [],
   });
 
   factory Lawyer.fromJson(Map<String, dynamic> json) {
@@ -113,8 +115,25 @@ class Lawyer {
       profileDescription: (json['profileDescription'] ?? '').toString(),
       status: (json['status'] ?? 'Active').toString(),
       specializations: specs,
+      legalServices: (json['legalServices'] as List? ?? [])
+          .map((s) => LawyerLegalService.fromJson(s as Map<String, dynamic>)).toList(),
     );
   }
 
   String get primarySpecialization => specializations.isNotEmpty ? specializations.first.name : 'Legal Counsel';
+}
+
+class LawyerLegalService {
+  final int legalServiceId;
+  final String serviceName;
+  final String description;
+  final String category;
+  const LawyerLegalService({required this.legalServiceId, required this.serviceName,
+    required this.description, required this.category});
+  factory LawyerLegalService.fromJson(Map<String, dynamic> json) => LawyerLegalService(
+    legalServiceId: json['legalServiceId'] as int,
+    serviceName: (json['serviceName'] ?? '').toString(),
+    description: (json['description'] ?? '').toString(),
+    category: (json['category'] ?? '').toString(),
+  );
 }

@@ -1,19 +1,30 @@
+import axios from "axios";
+import { SpecializationManager } from "../../components/lawyers/SpecializationManager";
 import { LawyerRecommendations } from "../../components/lawyers/LawyerRecommendations";
-import React, { useEffect, useState, useMemo } from "react";
+import React, { useEffect, useState, useMemo, useCallback, useRef } from "react";
 import { AdminLayout } from "../../components/layout/AdminLayout";
 import {
   lawyersApi,
   type Lawyer,
   type CreateLawyerPayload,
-  LAWYER_CATEGORIES,
+  type LawyerSpecialization,
 } from "../../api/lawyersApi";
+
+const errorMessage = (error: unknown, fallback: string) => axios.isAxiosError(error)
+  ? error.response?.data?.message || Object.values(error.response?.data?.errors ?? {}).flat().join(" ") || fallback : fallback;
 
 export const LawyersPage: React.FC = () => {
   const [showRecommendations, setShowRecommendations] = useState(false);
+  const loadVersion = useRef(0);
   const [lawyers, setLawyers] = useState<Lawyer[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  const [specializations, setSpecializations] = useState<LawyerSpecialization[]>([]);
+  const [editingLawyer, setEditingLawyer] = useState<Lawyer | null>(null);
+  const [success, setSuccess] = useState("");
+  const [availableDate, setAvailableDate] = useState("");
+  const [showSpecializations, setShowSpecializations] = useState(false);
   // Filters
   const [activeCategory, setActiveCategory] = useState<string>("All");
   const [searchTerm, setSearchTerm] = useState("");
@@ -30,7 +41,7 @@ export const LawyersPage: React.FC = () => {
     experience: 5,
     licenseNumber: "",
     profileDescription: "",
-    category: LAWYER_CATEGORIES[0],
+    category: (specializations[0]?.name ?? ""),
     password: "LawyerPassword123!",
   });
 
@@ -38,23 +49,27 @@ export const LawyersPage: React.FC = () => {
   const [deletingLawyer, setDeletingLawyer] = useState<Lawyer | null>(null);
   const [deleteProcessing, setDeleteProcessing] = useState(false);
 
-  const fetchLawyers = async () => {
+  const fetchLawyers = useCallback(async () => {
+    const version = ++loadVersion.current;
     try {
       setLoading(true);
       setError(null);
-      const data = await lawyersApi.getLawyers();
+      const [data, catalog] = await Promise.all([lawyersApi.getLawyers(undefined, undefined, availableDate), lawyersApi.getSpecializations()]);
+      if (version !== loadVersion.current) return;
       setLawyers(data);
-    } catch (err: any) {
-      console.error("Failed to load lawyers", err);
-      setError(err?.response?.data?.message || "Failed to load lawyer directory.");
+      setSpecializations(catalog);
+      setActiveCategory(current => current === "All" || catalog.some(s => s.name === current) ? current : "All");
+    } catch (err: unknown) {
+      if (version !== loadVersion.current) return;
+      setError(errorMessage(err, "Failed to load lawyer directory."));
     } finally {
-      setLoading(false);
+      if (version === loadVersion.current) setLoading(false);
     }
-  };
+  }, [availableDate]);
 
   useEffect(() => {
-    fetchLawyers();
-  }, []);
+    void Promise.resolve().then(fetchLawyers);
+  }, [fetchLawyers]);
 
   const filteredLawyers = useMemo(() => {
     return lawyers.filter((l) => {
@@ -73,8 +88,9 @@ export const LawyersPage: React.FC = () => {
         const matchesEmail = (l.email || "").toLowerCase().includes(term);
         const matchesQual = (l.qualification || "").toLowerCase().includes(term);
         const matchesLicense = (l.licenseNumber || "").toLowerCase().includes(term);
+        const matchesDescription = l.profileDescription.toLowerCase().includes(term);
         const matchesSpec = l.specializations.some((s) => s.name.toLowerCase().includes(term));
-        if (!matchesName && !matchesEmail && !matchesQual && !matchesLicense && !matchesSpec) {
+        if (!matchesName && !matchesEmail && !matchesQual && !matchesLicense && !matchesSpec && !matchesDescription) {
           return false;
         }
       }
@@ -102,10 +118,16 @@ export const LawyersPage: React.FC = () => {
 
     try {
       setSubmitting(true);
-      await lawyersApi.createLawyer({
-        ...formData,
-        experience: Number(formData.experience) || 0,
-      });
+      const payload = { ...formData, experience: Number(formData.experience),
+        specializationId: specializations.find(s => s.name === formData.category)?.specializationId };
+      if (editingLawyer) {
+        const update = { name: payload.name, email: payload.email, phoneNumber: payload.phoneNumber,
+          qualification: payload.qualification, experience: payload.experience, licenseNumber: payload.licenseNumber,
+          profileDescription: payload.profileDescription, category: payload.category, specializationId: payload.specializationId };
+        await lawyersApi.updateLawyer(editingLawyer.lawyerId, update);
+      } else await lawyersApi.createLawyer(payload);
+      setSuccess(editingLawyer ? "Lawyer updated successfully." : "Lawyer created successfully.");
+      setEditingLawyer(null);
 
       setIsAddModalOpen(false);
       setFormData({
@@ -116,14 +138,13 @@ export const LawyersPage: React.FC = () => {
         experience: 5,
         licenseNumber: "",
         profileDescription: "",
-        category: LAWYER_CATEGORIES[0],
+        category: (specializations[0]?.name ?? ""),
         password: "LawyerPassword123!",
       });
 
       await fetchLawyers();
-    } catch (err: any) {
-      console.error("Create lawyer failed", err);
-      setFormError(err?.response?.data?.message || "Failed to create lawyer account.");
+    } catch (err: unknown) {
+      setFormError(errorMessage(err, "Failed to save lawyer."));
     } finally {
       setSubmitting(false);
     }
@@ -136,8 +157,8 @@ export const LawyersPage: React.FC = () => {
       await lawyersApi.deleteLawyer(deletingLawyer.lawyerId);
       setDeletingLawyer(null);
       await fetchLawyers();
-    } catch (err: any) {
-      alert(err?.response?.data?.message || "Failed to delete lawyer.");
+    } catch (err: unknown) {
+      alert(errorMessage(err, "Failed to delete lawyer."));
     } finally {
       setDeleteProcessing(false);
     }
@@ -148,6 +169,8 @@ export const LawyersPage: React.FC = () => {
       title="Lawyer Management"
       subtitle="Register, assign legal categories, and manage certified counsel across practice areas"
     >
+      {success && <p role="status" className="mb-4 rounded-lg bg-green-50 p-3 text-green-800">{success}</p>}
+      {showSpecializations && <SpecializationManager items={specializations} onChanged={fetchLawyers} />}
       {showRecommendations && <LawyerRecommendations lawyers={lawyers} />}
       {/* Category Pills & Actions Header */}
       <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5 mb-6">
@@ -159,6 +182,7 @@ export const LawyersPage: React.FC = () => {
             </p>
           </div>
           <div className="flex flex-wrap gap-3">
+          <button type="button" onClick={() => setShowSpecializations(v => !v)} className="rounded-lg border px-4 py-2 text-sm font-bold">Manage specializations</button>
           <button type="button" aria-expanded={showRecommendations} aria-controls="lawyer-recommendations"
             onClick={() => setShowRecommendations(value => !value)}
             className="rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-bold text-white hover:bg-slate-700">
@@ -167,6 +191,9 @@ export const LawyersPage: React.FC = () => {
           <button
             onClick={() => {
               setFormError(null);
+              setEditingLawyer(null);
+              setFormData({ name: "", email: "", phoneNumber: "", qualification: "", experience: 0,
+                licenseNumber: "", profileDescription: "", category: specializations[0]?.name ?? "", password: "" });
               setIsAddModalOpen(true);
             }}
             className="inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-sm rounded-lg shadow-sm transition-colors cursor-pointer"
@@ -191,7 +218,7 @@ export const LawyersPage: React.FC = () => {
           >
             All Categories ({lawyers.length})
           </button>
-          {LAWYER_CATEGORIES.map((cat) => {
+          {specializations.map(s => s.name).map((cat) => {
             const count = lawyers.filter((l) =>
               l.specializations.some((s) => s.name.toLowerCase() === cat.toLowerCase())
             ).length;
@@ -213,6 +240,9 @@ export const LawyersPage: React.FC = () => {
 
         {/* Search bar */}
         <div className="mt-4">
+          <label className="mb-3 block text-sm">Available on
+            <input type="date" aria-label="Available on" value={availableDate} onChange={e => setAvailableDate(e.target.value)} className="ml-3 rounded border p-2" />
+          </label>
           <div className="relative">
             <input
               type="text"
@@ -270,10 +300,11 @@ export const LawyersPage: React.FC = () => {
           </p>
           <button
             onClick={() => {
-              setFormData((prev) => ({
-                ...prev,
-                category: activeCategory !== "All" ? activeCategory : LAWYER_CATEGORIES[0],
-              }));
+              setEditingLawyer(null);
+              setFormError(null);
+              setFormData({ name: "", email: "", phoneNumber: "", qualification: "", experience: 0,
+                licenseNumber: "", profileDescription: "", password: "",
+                category: activeCategory !== "All" ? activeCategory : (specializations[0]?.name ?? "") });
               setIsAddModalOpen(true);
             }}
             className="mt-4 px-4 py-2 bg-slate-900 text-white hover:bg-slate-800 text-xs font-semibold rounded-lg transition-colors cursor-pointer"
@@ -332,6 +363,11 @@ export const LawyersPage: React.FC = () => {
                         <div className="text-xs text-slate-500">{lawyer.phoneNumber || "No phone"}</div>
                       </td>
                       <td className="py-3.5 px-4 text-right">
+                        <button onClick={() => {
+                          setEditingLawyer(lawyer); setFormError(null);
+                          setFormData({ ...lawyer, category: lawyer.specializations[0]?.name ?? "", password: undefined });
+                          setIsAddModalOpen(true);
+                        }} className="px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-100 rounded">Edit</button>
                         <button
                           onClick={() => setDeletingLawyer(lawyer)}
                           className="px-2.5 py-1 text-xs font-semibold text-red-600 hover:text-red-800 hover:bg-red-50 rounded transition-colors cursor-pointer"
@@ -347,7 +383,7 @@ export const LawyersPage: React.FC = () => {
           </div>
           <div className="px-4 py-3 bg-slate-50 border-t border-slate-200 text-xs text-slate-500 flex justify-between items-center">
             <span>Showing {filteredLawyers.length} of {lawyers.length} registered lawyers</span>
-            <span className="font-semibold text-slate-700">Practice Area Distribution: 5 Authorized Categories</span>
+            <span className="font-semibold text-slate-700">{specializations.length} Practice Categories</span>
           </div>
         </div>
       )}
@@ -358,12 +394,13 @@ export const LawyersPage: React.FC = () => {
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
             <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between bg-slate-50">
               <div>
-                <h3 className="text-base font-bold text-slate-900">Add New Legal Counsel</h3>
+                <h3 className="text-base font-bold text-slate-900">{editingLawyer ? "Edit Legal Counsel" : "Add New Legal Counsel"}</h3>
                 <p className="text-xs text-slate-500 mt-0.5">
-                  Assign practitioner to one legal category and create their portal credentials
+                  {editingLawyer ? "Update profile and login email; account permissions and password stay unchanged." : "Assign practitioner to one legal category and create their portal credentials"}
                 </p>
               </div>
               <button
+                disabled={submitting}
                 onClick={() => setIsAddModalOpen(false)}
                 className="text-slate-400 hover:text-slate-600 p-1 rounded-lg"
               >
@@ -426,11 +463,13 @@ export const LawyersPage: React.FC = () => {
                   Authorized Practice Category (One Category) *
                 </label>
                 <select
+                  required
                   value={formData.category}
                   onChange={(e) => setFormData({ ...formData, category: e.target.value })}
                   className="w-full px-3 py-2.5 border-2 border-amber-300 bg-amber-50/40 rounded-lg text-sm font-semibold text-slate-900 focus:ring-2 focus:ring-amber-500 focus:outline-none"
                 >
-                  {LAWYER_CATEGORIES.map((cat) => (
+                  <option value="" disabled>Select specialization</option>
+                  {specializations.map(s => s.name).map((cat) => (
                     <option key={cat} value={cat}>
                       {cat}
                     </option>
@@ -483,17 +522,18 @@ export const LawyersPage: React.FC = () => {
                     className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-mono focus:ring-2 focus:ring-amber-500 focus:outline-none"
                   />
                 </div>
-                <div>
+                {!editingLawyer && <div>
                   <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
                     Initial Portal Password
                   </label>
                   <input
-                    type="text"
-                    value={formData.password}
+                    type="password"
+                    autoComplete="new-password"
+                    value={formData.password ?? ""}
                     onChange={(e) => setFormData({ ...formData, password: e.target.value })}
                     className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-amber-500 focus:outline-none font-mono"
                   />
-                </div>
+                </div>}
               </div>
 
               <div>
@@ -512,7 +552,8 @@ export const LawyersPage: React.FC = () => {
               <div className="pt-3 border-t border-slate-200 flex justify-end gap-3">
                 <button
                   type="button"
-                  onClick={() => setIsAddModalOpen(false)}
+                  disabled={submitting}
+                onClick={() => setIsAddModalOpen(false)}
                   className="px-4 py-2 border border-slate-300 text-slate-700 font-semibold text-xs rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
                 >
                   Cancel
@@ -522,7 +563,7 @@ export const LawyersPage: React.FC = () => {
                   disabled={submitting}
                   className="px-5 py-2 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs rounded-lg shadow-sm transition-colors cursor-pointer disabled:opacity-50"
                 >
-                  {submitting ? "Registering..." : "Confirm & Add Lawyer"}
+                  {submitting ? "Saving..." : editingLawyer ? "Save Changes" : "Confirm & Add Lawyer"}
                 </button>
               </div>
             </form>
@@ -537,7 +578,7 @@ export const LawyersPage: React.FC = () => {
             <h3 className="text-base font-bold text-slate-900">Remove Legal Counsel</h3>
             <p className="text-xs text-slate-600 mt-2">
               Are you sure you want to remove <strong>{deletingLawyer.name}</strong> from the system?
-              Their login and designated category ({deletingLawyer.specializations[0]?.name || "Counsel"}) will be unlinked.
+              Their directory profile and category assignments will be removed. Existing accounts are retained; lawyers with appointment history cannot be deleted.
             </p>
             <div className="mt-6 flex justify-end gap-3">
               <button

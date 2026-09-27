@@ -29,60 +29,40 @@ public static class DbInitializer
             { "Tax Law", "Direct and indirect taxation, corporate tax planning, revenue appeals, and audits." }
         };
 
-        // If "Corporate Law" exists, rename to "Corporate & Commercial Law"
-        var corp = await context.Specializations.FirstOrDefaultAsync(s => s.Name == "Corporate Law");
-        if (corp != null)
+        // Bootstrap only an empty catalog or the untouched four EF seed records.
+        // Once initialized, Admin owns the catalog: startup must not undo CRUD changes.
+        var catalog = await context.Specializations.ToListAsync();
+        var initialNames = new Dictionary<int, string>
         {
-            corp.Name = "Corporate & Commercial Law";
-            corp.Description = targetCategories["Corporate & Commercial Law"];
-        }
+            [1] = "Criminal Law", [2] = "Family Law", [3] = "Corporate Law", [4] = "Property Law"
+        };
+        var pristineEfCatalog = catalog.Count == 4 &&
+            catalog.All(s => initialNames.TryGetValue(s.SpecializationId, out var name) && name == s.Name) &&
+            !await context.Lawyers.AnyAsync();
+        if (catalog.Count != 0 && !pristineEfCatalog) return;
 
-        // If "Property Law" exists, rename to "Real Estate & Property Law"
-        var prop = await context.Specializations.FirstOrDefaultAsync(s => s.Name == "Property Law");
-        if (prop != null)
+        if (pristineEfCatalog)
         {
-            prop.Name = "Real Estate & Property Law";
-            prop.Description = targetCategories["Real Estate & Property Law"];
-        }
-
-        await context.SaveChangesAsync();
-
-        // Insert missing categories
-        foreach (var kvp in targetCategories)
-        {
-            var exists = await context.Specializations.AnyAsync(s => s.Name == kvp.Key);
-            if (!exists)
+            foreach (var (oldName, newName) in new[]
             {
-                context.Specializations.Add(new Specialization
-                {
-                    Name = kvp.Key,
-                    Description = kvp.Value
-                });
+                ("Corporate Law", "Corporate & Commercial Law"),
+                ("Property Law", "Real Estate & Property Law")
+            })
+            {
+                var category = catalog.Single(s => s.Name == oldName);
+                category.Name = newName;
+                category.Description = targetCategories[newName];
+                // Existing service categories are name-based, so preserve those associations.
+                var services = await context.LegalServices.Where(s => s.Category == oldName).ToListAsync();
+                foreach (var service in services) service.Category = newName;
             }
         }
-
+        if (!catalog.Any(s => s.Name == "Family Law"))
+            context.Specializations.Add(new Specialization { Name = "Family Law", Description = "Divorce, child custody, and domestic relationships." });
+        foreach (var (name, description) in targetCategories)
+            if (!catalog.Any(s => s.Name == name))
+                context.Specializations.Add(new Specialization { Name = name, Description = description });
         await context.SaveChangesAsync();
-
-        // Ensure lawyers without a specialization are mapped to a valid category
-        var unassignedLawyers = await context.Lawyers
-            .Include(l => l.LawyerSpecializations)
-            .Where(l => !l.LawyerSpecializations.Any())
-            .ToListAsync();
-
-        if (unassignedLawyers.Any())
-        {
-            var defaultSpec = await context.Specializations.FirstOrDefaultAsync(s => s.Name == "Corporate & Commercial Law")
-                           ?? await context.Specializations.FirstAsync();
-
-            foreach (var l in unassignedLawyers)
-            {
-                context.LawyerSpecializations.Add(new LawyerSpecialization
-                {
-                    LawyerId = l.LawyerId,
-                    SpecializationId = defaultSpec.SpecializationId
-                });
-            }
-        }
     }
 
     public static async Task SeedDocumentationServicesAsync(ApplicationDbContext context)

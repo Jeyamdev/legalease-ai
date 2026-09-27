@@ -21,7 +21,7 @@ The Python LangGraph nodes are `parse_requirement`, `validate_category`, `search
 
 The default model is `gemini-3.8-flash` in `ai-service/model_config.py`; `GEMINI_MODEL` overrides it. The lawyer agent uses the official `google-genai` SDK with Pydantic structured output. Other AI agents still use their existing LangChain integration.
 
-Create `ai-service/.env` from `.env.example` and set `GEMINI_API_KEY`, `GEMINI_MODEL`, and `AI_INTERNAL_KEY` to private values. The `.env` file is Git-ignored. Set `Ai__BaseUrl=http://127.0.0.1:8002/` and `Ai__InternalKey` to the same internal key in the backend process environment. The API key is used only by Python, never sent to browsers or mobile devices. Missing Gemini configuration and transient Gemini failures return 503. Invalid model categories return 422. Temporary Gemini errors are retried at most twice with short exponential backoff.
+Create `ai-service/.env` from `.env.example` and set `GEMINI_API_KEY`, `GEMINI_MODEL`, and `AI_INTERNAL_KEY` to private values. The AI service loads this Git-ignored file automatically at startup. Set `Ai__BaseUrl=http://127.0.0.1:8002/` and `Ai__InternalKey` to the same internal key in the backend process environment. The API key is used only by Python, never sent to browsers or mobile devices. Missing Gemini configuration and transient Gemini failures return 503. Invalid model categories return 422. Temporary Gemini errors are retried at most twice with short exponential backoff.
 
 Apply the new EF Core migration to a database you are authorized to update before using the new endpoint:
 
@@ -37,7 +37,6 @@ Run each process in a separate terminal from the repository root:
 cd ai-service
 python3 -m venv .venv
 .venv/bin/python -m pip install -r requirements-member1.txt
-set -a; source .env; set +a
 .venv/bin/python -m uvicorn lawyer_recommendation.app:app --host 127.0.0.1 --port 8002
 ```
 

@@ -3,12 +3,11 @@ import asyncio
 import os
 from datetime import date
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, Field
 from model_config import DEFAULT_GEMINI_MODEL
 
 
 class ParsedRequirement(BaseModel):
-    model_config = ConfigDict(extra='forbid')
     requirement: str = Field(min_length=3, max_length=4000)
     categoryId: int | None = None
     categoryName: str | None = None
@@ -53,7 +52,7 @@ class GeminiClassifier:
                     config=types.GenerateContentConfig(response_mime_type='application/json',
                                                        response_schema=ParsedRequirement, temperature=0),
                 ), timeout=20)
-                return ParsedRequirement.model_validate_json(response.text).model_dump()
+                return ParsedRequirement.model_validate_json(response.text, extra='forbid').model_dump()
             except Exception as exc:
                 status = getattr(exc, 'code', None) or getattr(exc, 'status_code', None)
                 temporary = isinstance(exc, (TimeoutError, ConnectionError)) or status in (429, 500, 502, 503, 504)

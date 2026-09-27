@@ -6,10 +6,12 @@ from uuid import UUID
 import httpx
 from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field, field_validator
+from dotenv import load_dotenv
 from .agent import InvalidClassification, build_recommendation_graph
 from .gemini import GeminiUnavailable, ParsedRequirement
 
 
+load_dotenv()
 app = FastAPI(title='Member 1 Lawyer Recommendation', docs_url=None, redoc_url=None)
 
 

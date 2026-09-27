@@ -3,11 +3,18 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
-from lawyer_recommendation.gemini import GeminiClassifier, GeminiUnavailable
+from lawyer_recommendation.gemini import GeminiClassifier, GeminiUnavailable, ParsedRequirement
 from model_config import DEFAULT_GEMINI_MODEL
 
 
 class GeminiClassificationTests(unittest.IsolatedAsyncioTestCase):
+    def test_schema_accepted_by_gemini_and_unexpected_fields_rejected_locally(self):
+        self.assertNotIn('additionalProperties', ParsedRequirement.model_json_schema())
+        with self.assertRaises(ValueError):
+            ParsedRequirement.model_validate({
+                'requirement': 'Synthetic property dispute', 'lawyerId': 999,
+            }, extra='forbid')
+
     async def test_uses_configured_model_and_structured_output(self):
         payload = {'requirement': 'Synthetic property dispute', 'categoryId': 3,
                    'categoryName': 'Property Law', 'location': None, 'preferredDate': None, 'keywords': ['property']}

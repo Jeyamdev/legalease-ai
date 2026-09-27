@@ -5,6 +5,7 @@ import '../../services/auth_service.dart';
 import '../../services/lawyer_service.dart';
 import 'book_appointment_screen.dart';
 import 'scheduling_agent_screen.dart';
+import 'recommendation_screen.dart';
 
 class LawyersScreen extends StatefulWidget {
   final String? initialCategory;
@@ -323,6 +324,13 @@ class _LawyersScreenState extends State<LawyersScreen> {
           style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
         ),
         actions: [
+          if (isAdmin)
+            IconButton(
+              icon: const Icon(Icons.psychology, color: AppTheme.secondaryAmber),
+              tooltip: 'Lawyer Recommendation Agent',
+              onPressed: () => Navigator.push(context,
+                  MaterialPageRoute(builder: (_) => const RecommendationScreen())),
+            ),
           if (isAdmin)
             IconButton(
               icon: const Icon(Icons.person_add, color: AppTheme.secondaryAmber),

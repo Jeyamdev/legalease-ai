@@ -1,5 +1,5 @@
 import unittest
-from lawyer_recommendation.agent import build_recommendation_graph
+from lawyer_recommendation.agent import InvalidClassification, build_recommendation_graph
 
 
 class Data:
@@ -7,33 +7,56 @@ class Data:
         return [{'id': 2, 'name': 'Family Law', 'description': 'Divorce and custody'}], [{'id': 2, 'name': 'Divorce filing', 'description': '', 'category': 'Family Law'}]
 
     async def candidates(self, specialization_ids, service_ids, date=None):
-        return [dict(lawyerId=str(i), status=status, experience=experience,
+        return [dict(lawyerId=str(i), status=status, experience=experience, availableDates=['2030-01-01'] if i == 3 else [],
                      specializations=[{'id': 2, 'name': 'Family Law'}], legalServices=[])
                 for i, status, experience in [(1, 'Active', 10), (2, 'Inactive', 30), (3, 'Active', 2)]
                 if not date or (date == '2030-01-01' and i == 3)]
 
 
 class AgentTests(unittest.IsolatedAsyncioTestCase):
+    class Classifier:
+        async def classify(self, requirement, categories, services):
+            return {'requirement': requirement, 'categoryId': 2 if requirement != 'unrecognized topic' else None,
+                    'categoryName': 'Family Law' if requirement != 'unrecognized topic' else None,
+                    'preferredDate': None, 'location': None, 'keywords': []}
+
     async def test_grounded_ranking_excludes_inactive(self):
-        result = await build_recommendation_graph(Data()).ainvoke({'requirement': 'divorce', 'limit': 5})
+        result = await build_recommendation_graph(Data(), self.Classifier()).ainvoke({'requirement': 'divorce', 'limit': 5})
         self.assertEqual(['1', '3'], [r['lawyerId'] for r in result['recommendations']])
         self.assertIn('Family Law', result['recommendations'][0]['reason'])
-        self.assertEqual('validate', result['trace'][-1]['step'])
+        self.assertEqual('await_human_approval', result['trace'][-1]['step'])
+        self.assertEqual('AWAITING_APPROVAL', result['status'])
 
     async def test_date_requires_recorded_availability(self):
-        result = await build_recommendation_graph(Data()).ainvoke({'requirement': 'custody', 'date': '2030-01-01'})
+        result = await build_recommendation_graph(Data(), self.Classifier()).ainvoke({'requirement': 'custody', 'date': '2030-01-01'})
         self.assertEqual(['3'], [r['lawyerId'] for r in result['recommendations']])
-        self.assertIn('requires confirmation', result['recommendations'][0]['reason'])
+        self.assertIn('rechecked at approval', result['recommendations'][0]['reason'])
 
     async def test_unmatched_requirement_requests_clarification(self):
-        result = await build_recommendation_graph(Data()).ainvoke({'requirement': 'unrecognized topic'})
+        result = await build_recommendation_graph(Data(), self.Classifier()).ainvoke({'requirement': 'unrecognized topic'})
         self.assertEqual([], result['recommendations'])
         self.assertTrue(result['warnings'])
 
     async def test_no_available_candidates(self):
-        result = await build_recommendation_graph(Data()).ainvoke({'requirement': 'divorce', 'date': '2030-02-02'})
+        result = await build_recommendation_graph(Data(), self.Classifier()).ainvoke({'requirement': 'divorce', 'date': '2030-02-02'})
         self.assertEqual([], result['recommendations'])
         self.assertTrue(result['warnings'])
+
+    async def test_hallucinated_category_is_rejected(self):
+        class InvalidClassifier:
+            async def classify(self, requirement, categories, services):
+                return {'requirement': requirement, 'categoryId': 999, 'categoryName': 'Invented Law', 'preferredDate': None}
+        with self.assertRaises(InvalidClassification):
+            await build_recommendation_graph(Data(), InvalidClassifier()).ainvoke({'requirement': 'property dispute'})
+
+    async def test_model_date_requires_real_unbooked_availability(self):
+        class DateClassifier(self.Classifier):
+            async def classify(self, requirement, categories, services):
+                parsed = await super().classify(requirement, categories, services)
+                parsed['preferredDate'] = '2030-02-02'
+                return parsed
+        result = await build_recommendation_graph(Data(), DateClassifier()).ainvoke({'requirement': 'divorce'})
+        self.assertEqual([], result['recommendations'])
 
 
 if __name__ == '__main__':

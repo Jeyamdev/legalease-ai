@@ -90,6 +90,28 @@ namespace LegalService.API.Migrations
                     b.ToTable("AgentWorkflows");
                 });
 
+            modelBuilder.Entity("LegalService.API.Models.Entities.LawyerRecommendationWorkflow", b =>
+                {
+                    b.Property<Guid>("WorkflowId").ValueGeneratedOnAdd().HasColumnType("uuid");
+                    b.Property<int>("OwnerUserId").HasColumnType("integer");
+                    b.Property<string>("Status").IsRequired().HasMaxLength(32).HasColumnType("character varying(32)");
+                    b.Property<string>("UserRequirement").IsRequired().HasMaxLength(4000).HasColumnType("character varying(4000)");
+                    b.Property<DateOnly?>("RequestedDate").HasColumnType("date");
+                    b.Property<int?>("CategoryId").HasColumnType("integer");
+                    b.Property<string>("ParsedRequirementJson").IsRequired().HasColumnType("jsonb");
+                    b.Property<string>("RecommendationsJson").IsRequired().HasColumnType("jsonb");
+                    b.Property<string>("WarningsJson").IsRequired().HasColumnType("jsonb");
+                    b.Property<string>("AuditJson").IsRequired().HasColumnType("jsonb");
+                    b.Property<Guid?>("ApprovedLawyerId").HasColumnType("uuid");
+                    b.Property<Guid?>("AppointmentId").HasColumnType("uuid");
+                    b.Property<DateTime>("CreatedAt").HasColumnType("timestamp with time zone");
+                    b.Property<DateTime>("UpdatedAt").HasColumnType("timestamp with time zone");
+                    b.HasKey("WorkflowId");
+                    b.HasIndex("OwnerUserId");
+                    b.HasIndex("Status");
+                    b.ToTable("LawyerRecommendationWorkflows");
+                });
+
             modelBuilder.Entity("LegalService.API.Models.Entities.Appointment", b =>
                 {
                     b.Property<Guid>("AppointmentId")

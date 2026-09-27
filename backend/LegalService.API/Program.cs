@@ -167,6 +167,7 @@ app.UseAuthorization();
 
 app.MapControllers();
 
+if (!app.Configuration.GetValue<bool>("EfDesignTime"))
 using (var scope = app.Services.CreateScope())
 {
     try
@@ -181,4 +182,5 @@ using (var scope = app.Services.CreateScope())
     }
 }
 
-app.Run();
+if (!app.Configuration.GetValue<bool>("EfDesignTime"))
+    app.Run();

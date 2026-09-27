@@ -44,13 +44,13 @@ set -a; source .env; set +a
 ```sh
 export Ai__BaseUrl=http://127.0.0.1:8002/
 export Ai__InternalKey='YOUR_PRIVATE_INTERNAL_KEY'
-dotnet run --project backend/LegalService.API/LegalService.API.csproj --launch-profile http
+ASPNETCORE_ENVIRONMENT=Development ASPNETCORE_URLS=http://127.0.0.1:5295 dotnet run --no-launch-profile --project backend/LegalService.API/LegalService.API.csproj
 ```
 
 ```sh
 cd frontend
 npm ci
-npm run dev
+VITE_API_URL=http://127.0.0.1:5295 npm run dev -- --host 127.0.0.1 --port 5173
 ```
 
 ```sh
@@ -59,7 +59,7 @@ flutter pub get
 flutter run
 ```
 
-Flutter uses the configured backend URL (default `http://localhost:5000`). On Android, use the project's existing `adb reverse tcp:5000 tcp:5000` setup or configure a reachable backend address.
+Flutter uses its server-settings dialog to configure the backend URL. For a USB-connected Android device, run `adb reverse tcp:5295 tcp:5295` and set the app's backend URL to `http://localhost:5295`. On a simulator or device without USB forwarding, set it to an address reachable from the device.
 
 ## API and human approval
 

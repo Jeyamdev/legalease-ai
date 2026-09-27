@@ -138,6 +138,20 @@ builder.Services.AddAuthentication(options =>
 
 var app = builder.Build();
 
+if (args.Contains("--seed-demo-lawyers"))
+{
+    if (!app.Environment.IsDevelopment())
+        throw new InvalidOperationException("Demo lawyers may only be seeded in Development.");
+    using var scope = app.Services.CreateScope();
+    var result = await DemoLawyerSeeder.SeedAsync(
+        scope.ServiceProvider.GetRequiredService<ApplicationDbContext>(),
+        scope.ServiceProvider.GetRequiredService<IPasswordService>(),
+        DateOnly.FromDateTime(DateTime.UtcNow));
+    Console.WriteLine($"Demo seed: {result.LawyersCreated} lawyers, {result.AvailabilitiesCreated} availability windows, " +
+        $"{result.SlotsCreated} slots added. Customer UUID: {result.CustomerId}");
+    return;
+}
+
 // ================================================================
 // HTTP Pipeline Configuration
 // ================================================================

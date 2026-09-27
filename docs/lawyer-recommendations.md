@@ -21,6 +21,20 @@ The Python LangGraph nodes are `parse_requirement`, `validate_category`, `search
 
 The default model is `gemini-3.8-flash` in `ai-service/model_config.py`; `GEMINI_MODEL` overrides it. The lawyer agent uses the official `google-genai` SDK with Pydantic structured output. Other AI agents still use their existing LangChain integration.
 
+### Demo dataset
+
+To add synthetic data to the configured PostgreSQL database, run this command **deliberately** in Development. Normal API startup does not seed these records, and the command refuses to run in other environments. Check the configured connection string before running it, since this project may point Development at a shared Neon database.
+
+```sh
+ASPNETCORE_ENVIRONMENT=Development dotnet run --project backend/LegalService.API/LegalService.API.csproj -- --seed-demo-lawyers
+```
+
+The seed creates 30 clearly marked demo lawyers (`lawyer01@example.test` through `lawyer30@example.test`, licenses `DEMO/LAW/0001` through `DEMO/LAW/0030`), five each in the six **existing** Criminal, Family, Corporate & Commercial, Real Estate & Property, Labour & Employment, and Tax categories. It creates no categories. Lawyer 30 is inactive and excluded by recommendations; lawyer 6 has no slot on the first demo date. There is no verified flag or lawyer location field in the current model, so neither is fabricated or used for ranking. Experience ranges from 2 to 20 years.
+
+The seed also creates one `demo.customer@example.test` account. All demo lawyer and customer accounts use the **development-only** password `DemoLawyer123!`, stored through the application's BCrypt password service. It creates two 30-minute slots (09:00 and 09:30 UTC) for each eligible lawyer on UTC today +2, +4 and +7 days: 86 availability windows and 172 slots on the first run. Running the same command again on the same UTC date adds no duplicate lawyers, users, windows, or slots; running on a later date extends the future demo schedule without changing existing bookings. The printed customer UUID follows the appointment service's existing integer-user-to-UUID display convention. Use the UUID printed by the command for approval, and choose an unbooked slot returned by `GET /api/appointments/available-slots?lawyerId=...&date=YYYY-MM-DD`.
+
+For demos, try “I need a lawyer for a company contract dispute”, “I have a dispute about ownership of my land”, or “My employer terminated me and I need legal assistance”. For date filtering, submit the UTC today +2 date with the land-dispute request: the property group has four available demo lawyers instead of five. Recommendation ranking uses specialization, existing legal-service links, experience, and requested-date availability; it does not use profile text or location.
+
 Create `ai-service/.env` from `.env.example` and set `GEMINI_API_KEY`, `GEMINI_MODEL`, and `AI_INTERNAL_KEY` to private values. The AI service loads this Git-ignored file automatically at startup. Set `Ai__BaseUrl=http://127.0.0.1:8002/` and `Ai__InternalKey` to the same internal key in the backend process environment. The API key is used only by Python, never sent to browsers or mobile devices. Missing Gemini configuration and transient Gemini failures return 503. Invalid model categories return 422. Temporary Gemini errors are retried at most twice with short exponential backoff.
 
 Apply the new EF Core migration to a database you are authorized to update before using the new endpoint:

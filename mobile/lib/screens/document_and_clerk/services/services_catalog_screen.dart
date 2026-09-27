@@ -3,7 +3,7 @@ import '../../../config/app_theme.dart';
 import '../../../models/documentation_service.dart';
 import '../../../services/documentation_service.dart';
 import '../../../widgets/server_settings_dialog.dart';
-import 'request_creation_dialog.dart';
+import 'manual_request_dialog.dart';
 import '../../chat/ai_chat_screen.dart';
 
 class ServicesCatalogScreen extends StatefulWidget {
@@ -48,15 +48,26 @@ class _ServicesCatalogScreenState extends State<ServicesCatalogScreen> {
     }
   }
 
-  void _openRequestModal(DocumentationService service) {
+  void _openManualRequestModal([DocumentationService? initialService]) {
+    if (_services.isEmpty) {
+      _fetchServices();
+      return;
+    }
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
-      builder: (ctx) => RequestCreationBottomSheet(service: service),
+      builder: (ctx) => ManualRequestCreationBottomSheet(
+        services: _services,
+        initialService: initialService,
+      ),
     );
+  }
+
+  void _openRequestModal(DocumentationService service) {
+    _openManualRequestModal(service);
   }
 
 
@@ -72,6 +83,11 @@ class _ServicesCatalogScreenState extends State<ServicesCatalogScreen> {
           ],
         ),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.add_task_rounded, color: AppTheme.gold),
+            tooltip: 'Create Manual Request',
+            onPressed: () => _openManualRequestModal(),
+          ),
           IconButton(
             icon: const Icon(Icons.settings_input_antenna),
             tooltip: 'Server Settings',
@@ -133,7 +149,70 @@ class _ServicesCatalogScreenState extends State<ServicesCatalogScreen> {
                         ],
                       ),
                     ),
-                    const SizedBox(height: 14),
+
+                    // ── Direct Create Request Action Banner ───────────────────────
+                    Container(
+                      margin: const EdgeInsets.only(top: 14, bottom: 18),
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        gradient: const LinearGradient(
+                          colors: [AppTheme.primaryNavy, Color(0xFF1E293B)],
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                        ),
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(color: AppTheme.gold.withValues(alpha: 0.3)),
+                        boxShadow: [
+                          BoxShadow(
+                            color: AppTheme.primaryNavy.withValues(alpha: 0.18),
+                            blurRadius: 10,
+                            offset: const Offset(0, 4),
+                          ),
+                        ],
+                      ),
+                      child: Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(10),
+                            decoration: BoxDecoration(
+                              color: AppTheme.gold.withValues(alpha: 0.2),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: const Icon(Icons.post_add_rounded, color: AppTheme.gold, size: 24),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: const [
+                                Text(
+                                  'Know what to submit?',
+                                  style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold),
+                                ),
+                                SizedBox(height: 2),
+                                Text(
+                                  'Create a request directly for Admin & Clerk review.',
+                                  style: TextStyle(color: Color(0xFFCBD5E1), fontSize: 11),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          ElevatedButton.icon(
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: AppTheme.gold,
+                              foregroundColor: AppTheme.primaryNavy,
+                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                              elevation: 0,
+                            ),
+                            icon: const Icon(Icons.add, size: 16),
+                            label: const Text('Create Request', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold)),
+                            onPressed: () => _openManualRequestModal(),
+                          ),
+                        ],
+                      ),
+                    ),
 
                     // Service Cards
                     ..._services.map((svc) {

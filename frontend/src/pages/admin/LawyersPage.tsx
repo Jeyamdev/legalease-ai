@@ -1,3 +1,4 @@
+import { LawyerRecommendations } from "../../components/lawyers/LawyerRecommendations";
 import React, { useEffect, useState, useMemo } from "react";
 import { AdminLayout } from "../../components/layout/AdminLayout";
 import {
@@ -8,6 +9,7 @@ import {
 } from "../../api/lawyersApi";
 
 export const LawyersPage: React.FC = () => {
+  const [showRecommendations, setShowRecommendations] = useState(false);
   const [lawyers, setLawyers] = useState<Lawyer[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -146,6 +148,7 @@ export const LawyersPage: React.FC = () => {
       title="Lawyer Management"
       subtitle="Register, assign legal categories, and manage certified counsel across practice areas"
     >
+      {showRecommendations && <LawyerRecommendations lawyers={lawyers} />}
       {/* Category Pills & Actions Header */}
       <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5 mb-6">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -155,6 +158,12 @@ export const LawyersPage: React.FC = () => {
               Each attorney is designated to exactly one primary legal practice category
             </p>
           </div>
+          <div className="flex flex-wrap gap-3">
+          <button type="button" aria-expanded={showRecommendations} aria-controls="lawyer-recommendations"
+            onClick={() => setShowRecommendations(value => !value)}
+            className="rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-bold text-white hover:bg-slate-700">
+            AI Recommendation
+          </button>
           <button
             onClick={() => {
               setFormError(null);
@@ -167,6 +176,7 @@ export const LawyersPage: React.FC = () => {
             </svg>
             Add New Lawyer
           </button>
+          </div>
         </div>
 
         {/* Practice Categories Tabs */}

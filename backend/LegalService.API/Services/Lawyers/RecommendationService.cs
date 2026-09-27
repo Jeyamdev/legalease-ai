@@ -21,10 +21,19 @@ public sealed class RecommendationService(HttpClient client, IConfiguration conf
 {
     public async Task<RecommendationResponse> RecommendAsync(RecommendationRequest request, CancellationToken ct)
     {
-        LawyerService.Validate(request);
+        var errors = new List<ValidationResult>();
+        if (!Validator.TryValidateObject(request, new ValidationContext(request), errors, true) || request.Requirement.Trim().Length < 3)
+            throw new ApiException(400, "Describe your legal requirement using at least three characters.");
         if (!Uri.TryCreate(config["Ai:BaseUrl"], UriKind.Absolute, out var url) || string.IsNullOrWhiteSpace(config["Ai:InternalKey"]))
             throw new ApiException(503, "Lawyer recommendations are not configured.");
-        using var message = new HttpRequestMessage(HttpMethod.Post, new Uri(url, "lawyer-recommendations")) { Content = JsonContent.Create(request) };
+        var specializations = await db.Specializations.AsNoTracking().Select(s => new { id = s.SpecializationId, name = s.Name, description = s.Description }).ToListAsync(ct);
+        var services = await db.LegalServices.AsNoTracking().Select(s => new { id = s.LegalServiceId, name = s.ServiceName, description = s.Description, category = s.Category }).ToListAsync(ct);
+        var candidates = await db.Lawyers.AsNoTracking().AsSplitQuery()
+            .Where(l => l.Status == "Active" && (request.Date == null || l.LawyerAvailabilities.Any(a => a.Date == request.Date)))
+            .Select(l => new { lawyerId = l.LawyerId, name = l.Name, status = l.Status, experience = l.Experience,
+                specializations = l.LawyerSpecializations.Select(s => new { id = s.SpecializationId, name = s.Specialization.Name }).ToList(),
+                legalServices = l.LawyerLegalServices.Select(s => new { id = s.LegalServiceId, name = s.LegalService.ServiceName }).ToList() }).ToListAsync(ct);
+        using var message = new HttpRequestMessage(HttpMethod.Post, new Uri(url, "lawyer-recommendations")) { Content = JsonContent.Create(new { request.Requirement, request.Date, request.Limit, specializations, services, candidates }) };
         message.Headers.Add("X-Internal-Key", config["Ai:InternalKey"]);
         try
         {

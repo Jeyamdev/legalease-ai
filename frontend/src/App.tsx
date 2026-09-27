@@ -21,17 +21,6 @@ import { AppointmentsPage } from "./pages/admin/AppointmentsPage";
 import { LawyersPage } from "./pages/admin/LawyersPage";
 
 
-import { AdminLayout } from "./features/lawyers/components/Shared";
-import AdminLoginPage from "./features/lawyers/pages/AdminLoginPage";
-import LawyerListPage from "./features/lawyers/pages/LawyerListPage";
-import LawyerEditorPage from "./features/lawyers/pages/LawyerEditorPage";
-import LawyerDetailPage from "./features/lawyers/pages/LawyerDetailPage";
-import RecommendationPage from "./features/lawyers/recommendations/RecommendationPage";
-import CatalogPage from "./features/lawyers/pages/CatalogPage";
-
-import LoginPage from "./features/auth/LoginPage";
-import SignupPage from "./features/auth/SignupPage";
-
 function App() {
   return (
     <BrowserRouter>
@@ -150,19 +139,6 @@ function App() {
         <Route path="/my-requests" element={<MyServiceRequestsPage />} />
         <Route path="/my-requests/new" element={<CreateServiceRequestPage />} />
         <Route path="/my-requests/:id" element={<ServiceRequestDetailPage />} />
-
-        <Route path="/member1/login" element={<LoginPage />} />
-        <Route path="/signup" element={<SignupPage />} />
-        <Route path="/admin/login" element={<AdminLoginPage />} />
-        <Route path="/admin/lawyer-management" element={<AdminLayout />}>
-          <Route index element={<LawyerListPage />} />
-          <Route path="new" element={<LawyerEditorPage />} />
-          <Route path=":id" element={<LawyerDetailPage />} />
-          <Route path=":id/edit" element={<LawyerEditorPage />} />
-          <Route path="specializations" element={<CatalogPage key="specializations" kind="specializations" />} />
-          <Route path="legal-services" element={<CatalogPage key="legal-services" kind="legal-services" />} />
-          <Route path="recommendation-test" element={<RecommendationPage />} />
-        </Route>
 
         {/* Catch-all */}
         <Route path="*" element={<Navigate to="/" replace />} />

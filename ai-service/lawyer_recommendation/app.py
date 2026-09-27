@@ -7,12 +7,15 @@ import httpx
 from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field, field_validator
 from .agent import build_recommendation_graph
-from .platform import HttpPlatformData
+
 
 app = FastAPI(title='Member 1 Lawyer Recommendation', docs_url=None, redoc_url=None)
 
 
 class RecommendationRequest(BaseModel):
+    specializations: list[dict] = Field(default_factory=list)
+    services: list[dict] = Field(default_factory=list)
+    candidates: list[dict] = Field(default_factory=list)
     requirement: str = Field(min_length=3, max_length=4000)
     @field_validator('requirement')
     @classmethod
@@ -42,13 +45,24 @@ async def recommend(request: RecommendationRequest, x_internal_key: str = Header
     key = os.environ.get('AI_INTERNAL_KEY', '')
     if not key or not secrets.compare_digest(key, x_internal_key):
         raise HTTPException(401, 'Internal authentication required')
-    base_url = os.environ.get('PLATFORM_API_BASE_URL')
-    if not base_url:
-        raise HTTPException(503, 'Platform API is not configured')
+    # Only the authenticated backend supplies the database snapshot. No browser data
+    # or model-generated lawyer identities are trusted as candidates.
+    class SnapshotData:
+        async def catalogs(self):
+            return request.specializations, request.services
+
+        async def candidates(self, specialization_ids, service_ids, date=None):
+            return [lawyer for lawyer in request.candidates
+                    if any(s['id'] in specialization_ids for s in lawyer['specializations'])
+                    or any(s['id'] in service_ids for s in lawyer['legalServices'])]
+
     try:
-        async with httpx.AsyncClient(base_url=base_url.rstrip('/') + '/', timeout=10) as client:
-            graph = build_recommendation_graph(HttpPlatformData(client))
-            result = await asyncio.wait_for(graph.ainvoke({**request.model_dump(mode='json')}), timeout=40)
+        graph = build_recommendation_graph(SnapshotData())
+        result = await asyncio.wait_for(graph.ainvoke({
+            'requirement': request.requirement,
+            'date': request.date.isoformat() if request.date else None,
+            'limit': request.limit,
+        }), timeout=40)
         return {k: result[k] for k in ('recommendations', 'warnings', 'trace')}
     except ValueError:
         raise HTTPException(422, 'Unable to rank candidates. Refine the requirement.') from None

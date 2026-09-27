@@ -2,7 +2,7 @@ using LegalService.API.Services.Lawyers;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 namespace LegalService.API.Controllers;
-[ApiController, Route("api/lawyer-recommendations"), Authorize(AuthenticationSchemes = "Member1")]
+[ApiController, Route("api/lawyer-recommendations"), Authorize(Roles = "Admin")]
 public sealed class LawyerRecommendationsController(ILawyerRecommendationService service) : ControllerBase
 {
     [HttpPost]

@@ -4,7 +4,7 @@ import '../services/auth_service.dart';
 import '../widgets/server_settings_dialog.dart';
 import 'auth/login_screen.dart';
 import 'services/services_catalog_screen.dart';
-import 'chat/ai_chat_screen.dart';
+import 'chat/common_ai_screen.dart';
 import 'requests/my_requests_screen.dart';
 import 'appointments/my_appointments_screen.dart';
 import 'appointments/lawyers_screen.dart';
@@ -144,12 +144,12 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
         ? <Widget>[
             const LawyerScheduleScreen(),
             const LawyersScreen(),
-            const AiChatScreen(),
+            const CommonAiScreen(),
             ProjectHubScreen(onSwitchTab: (idx) => setState(() => _selectedIndex = idx)),
           ]
         : <Widget>[
             ProjectHubScreen(onSwitchTab: (idx) => setState(() => _selectedIndex = idx)),
-            const AiChatScreen(),
+            const CommonAiScreen(),
             const ServicesCatalogScreen(),
             const LawyersScreen(),
             const MyRequestsScreen(),

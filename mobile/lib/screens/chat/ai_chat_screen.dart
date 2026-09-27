@@ -12,7 +12,6 @@ import '../../widgets/chat_bubble.dart';
 import '../../widgets/sample_document_picker_dialog.dart';
 import '../auth/login_screen.dart';
 import '../requests/my_requests_screen.dart';
-import '../appointments/scheduling_agent_screen.dart';
 
 class AiChatScreen extends StatefulWidget {
   const AiChatScreen({super.key});
@@ -731,16 +730,6 @@ class _AiChatScreenState extends State<AiChatScreen> {
           ],
         ),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.calendar_month, color: AppTheme.secondaryAmber, size: 20),
-            tooltip: 'Lawyer Scheduling Assistant',
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const SchedulingAgentScreen()),
-              );
-            },
-          ),
           ValueListenableBuilder(
             valueListenable: AuthService.currentUser,
             builder: (ctx, user, _) {

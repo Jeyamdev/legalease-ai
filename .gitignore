@@ -525,3 +525,17 @@ mobile/.pub/
 backend/LegalService.API/Storage/Uploads/
 scratch_*.py
 ai-service/data/
+
+# Member 1 local configuration and generated output
+.env.*
+!.env.example
+.venv/
+.pytest_cache/
+.dart_tool/
+.flutter-plugins-dependencies
+**/build/
+frontend/dist/
+frontend/playwright-report/
+
+!ai-service/requirements-member1.txt
+!ai-service/requirements-member1.lock.txt

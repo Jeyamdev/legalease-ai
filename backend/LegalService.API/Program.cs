@@ -188,11 +188,12 @@ using (var scope = app.Services.CreateScope())
     {
         var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
         await DbInitializer.SeedCategoriesAsync(dbContext);
+        await DbInitializer.SeedDocumentationServicesAsync(dbContext);
     }
     catch (Exception ex)
     {
         var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
-        logger.LogError(ex, "Failed to seed lawyer categories in database.");
+        logger.LogError(ex, "Failed to seed lawyer categories or documentation services in database.");
     }
 }
 

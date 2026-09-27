@@ -164,12 +164,12 @@ class _AiChatScreenState extends State<AiChatScreen> {
 
       final rawOpts = session['action_options'] ?? session['options'] ?? session['actionOptions'];
       List<String>? initialOptions;
-      if (rawOpts is List && rawOpts.isNotEmpty) {
+      if (rawOpts is List && rawOpts.length > 1) {
         initialOptions = rawOpts.map((e) => e.toString()).toList();
       } else {
         initialOptions = [
           'Rental & Lease Agreement',
-          'Business Registration',
+          'Business & Corporate Registration',
           'Power of Attorney',
           'Property Transfer',
           '📁 View All Services',
@@ -258,9 +258,20 @@ class _AiChatScreenState extends State<AiChatScreen> {
           missingList = rawMissing.map((e) => e.toString()).toList();
         }
 
-        final needsUpload = (status == 'WAITING_FOR_DOCUMENTS' || status == 'ANALYZING') &&
-            _requestId != null &&
+        final hasUploadInText = reply.toLowerCase().contains('upload the following') ||
+            (reply.toLowerCase().contains('please upload') && reply.toLowerCase().contains('document'));
+
+        if (missingList.isEmpty && hasUploadInText) {
+          missingList = _extractRequiredDocsFromText(reply);
+        }
+
+        final needsUpload = ((status == 'WAITING_FOR_DOCUMENTS' || status == 'ANALYZING' || hasUploadInText)) &&
             missingList.isNotEmpty;
+
+        final isStartProposal = reply.toLowerCase().contains('would you like to start') ||
+            reply.toLowerCase().contains('start your request') ||
+            reply.toLowerCase().contains('start your official request') ||
+            reply.toLowerCase().contains('initiate your official request');
 
         if (needsUpload) {
           if (!AuthService.isAuthenticated) {
@@ -271,13 +282,12 @@ class _AiChatScreenState extends State<AiChatScreen> {
           } else {
             dynamicOptions = missingList.map((m) => '📄 Upload $m').toList();
           }
-        } else if (reply.contains('Would you like to start your request for **') ||
-            reply.toLowerCase().contains('would you like to start your request')) {
-          final match = RegExp(r'Would you like to start your request for \*\*(.*?)\*\*').firstMatch(reply);
-          final sName = match?.group(1) ?? 'this service';
+        } else if (isStartProposal) {
+          final match = RegExp(r'\*\*(.*?)\*\*').firstMatch(reply);
+          final sName = match?.group(1) ?? 'Property Transfer';
           dynamicOptions = [
             '📄 Start Request for $sName',
-            'Tell me more about $sName',
+            'Requirements for $sName',
             '📁 View All Services',
           ];
         } else if (reply.toLowerCase().contains('login required') ||
@@ -285,24 +295,29 @@ class _AiChatScreenState extends State<AiChatScreen> {
           dynamicOptions = [
             '🔑 Sign In / Register',
             'Rental & Lease Agreement',
-            'Business Registration',
+            'Business & Corporate Registration',
             '📁 View All Services',
           ];
-        } else if (dynamicOptions == null && (
-            reply.toLowerCase().contains('what service') ||
-            reply.toLowerCase().contains('which service') ||
-            reply.toLowerCase().contains('what legal service') ||
-            reply.toLowerCase().contains('which of these services') ||
-            reply.toLowerCase().contains('pleasure to meet you') ||
-            reply.toLowerCase().contains('how can i assist you') ||
-            reply.toLowerCase().contains('welcome to lexintelligence'))) {
-          dynamicOptions = [
-            'Rental & Lease Agreement',
-            'Business Registration',
-            'Power of Attorney',
-            'Property Transfer',
-            '📁 View All Services',
-          ];
+        }
+
+        // If options are empty or only "View All Services", provide the rich service chips
+        if (dynamicOptions == null ||
+            dynamicOptions.isEmpty ||
+            (dynamicOptions.length == 1 && dynamicOptions.first.contains('View All Services'))) {
+          if (reply.toLowerCase().contains('service') ||
+              reply.toLowerCase().contains('which of these') ||
+              reply.toLowerCase().contains('pleasure') ||
+              reply.toLowerCase().contains('assist') ||
+              reply.toLowerCase().contains('welcome') ||
+              reply.toLowerCase().contains('name')) {
+            dynamicOptions = [
+              'Rental & Lease Agreement',
+              'Business & Corporate Registration',
+              'Power of Attorney',
+              'Property Transfer',
+              '📁 View All Services',
+            ];
+          }
         }
 
         setState(() {
@@ -323,6 +338,25 @@ class _AiChatScreenState extends State<AiChatScreen> {
         _scrollToBottom();
       }
     }
+  }
+
+  List<String> _extractRequiredDocsFromText(String text) {
+    final docs = <String>[];
+    final lines = text.split('\n');
+    for (final line in lines) {
+      final trimmed = line.trim();
+      final match = RegExp(r'^\d+[\.\)]\s*(?:\*\*)?([A-Za-z\s]+?)(?:\*\*)?$').firstMatch(trimmed);
+      if (match != null) {
+        final doc = match.group(1)?.trim();
+        if (doc != null && doc.length > 2 && !doc.toLowerCase().startsWith('step')) {
+          docs.add(doc);
+        }
+      }
+    }
+    if (docs.isEmpty && text.toLowerCase().contains('property transfer')) {
+      return ['NIC Copy', 'Prior Title Deed Copy', 'Survey Plan', 'Sale Agreement Draft'];
+    }
+    return docs;
   }
 
   void _showLoginRequiredDialog() {

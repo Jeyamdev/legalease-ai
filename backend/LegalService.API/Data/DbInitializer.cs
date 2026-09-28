@@ -169,4 +169,74 @@ public static class DbInitializer
 
         await context.SaveChangesAsync();
     }
+
+    public static async Task SeedStaffAccountsAsync(ApplicationDbContext context, LegalService.API.Authentication.Services.IPasswordService passwordService)
+    {
+        // 1. Ensure Admin Account
+        var admin = await context.Users.FirstOrDefaultAsync(u => u.Email == "admin@legalease.com");
+        if (admin == null)
+        {
+            context.Users.Add(new User
+            {
+                Name = "System Administrator",
+                Email = "admin@legalease.com",
+                Role = "Admin",
+                PasswordHash = passwordService.HashPassword("AdminPassword123!"),
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow
+            });
+        }
+        else
+        {
+            admin.Role = "Admin";
+            admin.PasswordHash = passwordService.HashPassword("AdminPassword123!");
+            admin.UpdatedAt = DateTime.UtcNow;
+        }
+
+        // 2. Ensure Clerk in Clerks table
+        var clerkEntity = await context.Clerks.FirstOrDefaultAsync(c => c.Email == "clerk@legalease.com");
+        if (clerkEntity == null)
+        {
+            context.Clerks.Add(new Clerk
+            {
+                Name = "Senior Legal Clerk",
+                Email = "clerk@legalease.com",
+                Department = "Legal Documentation & Conveyancing",
+                Contact = "+94 11 234 5678",
+                IsActive = true,
+                PasswordHash = passwordService.HashPassword("ClerkPassword123!"),
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow
+            });
+        }
+        else
+        {
+            clerkEntity.IsActive = true;
+            clerkEntity.PasswordHash = passwordService.HashPassword("ClerkPassword123!");
+            clerkEntity.UpdatedAt = DateTime.UtcNow;
+        }
+
+        // 3. Ensure Clerk in Users table
+        var clerkUser = await context.Users.FirstOrDefaultAsync(u => u.Email == "clerk@legalease.com");
+        if (clerkUser == null)
+        {
+            context.Users.Add(new User
+            {
+                Name = "Senior Legal Clerk",
+                Email = "clerk@legalease.com",
+                Role = "Clerk",
+                PasswordHash = passwordService.HashPassword("ClerkPassword123!"),
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow
+            });
+        }
+        else
+        {
+            clerkUser.Role = "Clerk";
+            clerkUser.PasswordHash = passwordService.HashPassword("ClerkPassword123!");
+            clerkUser.UpdatedAt = DateTime.UtcNow;
+        }
+
+        await context.SaveChangesAsync();
+    }
 }

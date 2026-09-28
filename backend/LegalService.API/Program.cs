@@ -203,13 +203,15 @@ using (var scope = app.Services.CreateScope())
     try
     {
         var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        var passwordService = scope.ServiceProvider.GetRequiredService<LegalService.API.Authentication.Services.IPasswordService>();
         await DbInitializer.SeedCategoriesAsync(dbContext);
         await DbInitializer.SeedDocumentationServicesAsync(dbContext);
+        await DbInitializer.SeedStaffAccountsAsync(dbContext, passwordService);
     }
     catch (Exception ex)
     {
         var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
-        logger.LogError(ex, "Failed to seed lawyer categories or documentation services in database.");
+        logger.LogError(ex, "Failed to seed lawyer categories, documentation services, or staff accounts in database.");
     }
 }
 

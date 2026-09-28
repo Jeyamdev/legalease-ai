@@ -90,12 +90,37 @@ test("create lawyer, associate catalogs, manage availability and confirm deactiv
   await page.getByLabel("Password").fill("test-password");
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await expect(page.getByText("No lawyers match these filters.")).toBeVisible();
-  await page.getByLabel("Search by name").fill("Alice");
-  await page.getByRole("button", { name: "Search", exact: true }).click();
-  await page.getByLabel("Search by name").fill("Bob");
-  await page.getByRole("button", { name: "Search", exact: true }).click();
-  await page.goBack();
-  await expect(page.getByLabel("Search by name")).toHaveValue("Alice");
+
+
+
+ await page.getByLabel("Search by name").fill("Alice");
+ await page.getByRole("button", { name: "Search", exact: true }).click();
+
+ await expect(page).toHaveURL(/search=Alice/);
+
+// IMPORTANT:
+// Wait until NameSearch has remounted using the Alice URL value.
+await expect(
+  page.getByLabel("Search by name"),
+).toHaveValue("Alice");
+
+await page.getByLabel("Search by name").fill("Bob");
+await page.getByRole("button", { name: "Search", exact: true }).click();
+
+await expect(page).toHaveURL(/search=Bob/);
+
+// Wait for the Bob remount as well.
+await expect(
+  page.getByLabel("Search by name"),
+).toHaveValue("Bob");
+
+await page.goBack();
+
+await expect(page).toHaveURL(/search=Alice/);
+
+
+
+
   await page.getByRole("link", { name: "Add lawyer" }).click();
   await page.getByLabel("Full name").fill("Asha Perera");
   await page.getByLabel("Email", { exact: true }).fill("asha@example.com");

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
 
@@ -23,7 +24,9 @@ public class User
 
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 
-    // Helper properties for backward compatibility
+    public ICollection<UserRole> UserRoles { get; set; }
+        = new List<UserRole>();
+
     [NotMapped]
     public string FullName
     {

@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { authApi } from "../api/authApi";
+import { useSession } from "../features/lawyers/hooks/session";
 
 export const StaffLoginPage: React.FC = () => {
   const navigate = useNavigate();
@@ -63,6 +64,9 @@ export const StaffLoginPage: React.FC = () => {
     switch (role) {
       case "admin":
         authApi.setCurrentAdmin(res);
+        if (res.token) {
+          useSession.getState().signIn(res.token, [res.role || "Admin"]);
+        }
         navigate("/admin");
         break;
 

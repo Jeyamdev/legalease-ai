@@ -2,54 +2,40 @@ import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { LawyerLayout } from "../../components/layout/LawyerLayout";
-import { authApi } from "../../api/authApi";
 
+import {
+  authApi,
+  type StaffUser,
+} from "../../api/authApi";
 
+interface Appointment {
+  appointmentId: number;
+  customerName?: string;
+  serviceName?: string;
+  date?: string;
+  startTime?: string;
+  status: string;
+}
 
 export const LawyerDashboardPage: React.FC = () => {
   const navigate = useNavigate();
 
   const [currentLawyer, setCurrentLawyer] =
-    useState<LawyerUser | null>(null);
+    useState<StaffUser | null>(null);
 
-  const [appointments, setAppointments] =
+  const [appointments] =
     useState<Appointment[]>([]);
 
-  const [loading, setLoading] = useState(true);
-
   useEffect(() => {
-    const lawyer =
-      authApi.getCurrentLawyer?.() as LawyerUser | null;
+    const lawyer = authApi.getCurrentLawyer();
 
     if (!lawyer || lawyer.role?.toLowerCase() !== "lawyer") {
-      navigate("/lawyer/login", { replace: true });
+      navigate("/staff/login", { replace: true });
       return;
     }
 
     setCurrentLawyer(lawyer);
-
-    loadAppointments(lawyer.userId);
   }, [navigate]);
-
-  const loadAppointments = async (
-    lawyerId: string | number
-  ) => {
-    try {
-      setLoading(true);
-
-      const data =
-        await lawyerApi.getAppointments(lawyerId);
-
-      setAppointments(data);
-    } catch (error) {
-      console.error(
-        "Failed to load lawyer appointments:",
-        error
-      );
-    } finally {
-      setLoading(false);
-    }
-  };
 
   if (!currentLawyer) {
     return null;
@@ -74,14 +60,14 @@ export const LawyerDashboardPage: React.FC = () => {
   return (
     <LawyerLayout>
 
-      {/* Welcome */}
+      {/* Welcome Section */}
       <div className="mb-6">
         <h2 className="text-2xl font-bold text-slate-900">
           Welcome, {currentLawyer.name}
         </h2>
 
         <p className="text-sm text-slate-500 mt-1">
-          Manage your appointments and consultations.
+          Manage your legal consultations and appointments.
         </p>
       </div>
 
@@ -120,7 +106,7 @@ export const LawyerDashboardPage: React.FC = () => {
 
       </div>
 
-      {/* Appointment List */}
+      {/* Appointment Section */}
       <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
 
         <div className="px-5 py-4 border-b border-slate-200">
@@ -129,11 +115,7 @@ export const LawyerDashboardPage: React.FC = () => {
           </h3>
         </div>
 
-        {loading ? (
-          <div className="p-8 text-center text-sm text-slate-500">
-            Loading appointments...
-          </div>
-        ) : appointments.length === 0 ? (
+        {appointments.length === 0 ? (
           <div className="p-8 text-center text-sm text-slate-500">
             No appointments available.
           </div>
@@ -173,12 +155,11 @@ export const LawyerDashboardPage: React.FC = () => {
                     className="border-t border-slate-100"
                   >
                     <td className="px-5 py-4 font-medium text-slate-900">
-                      {appointment.customerName ||
-                        "Customer"}
+                      {appointment.customerName || "Customer"}
                     </td>
 
                     <td className="px-5 py-4 text-slate-600">
-                      {appointment.serviceName}
+                      {appointment.serviceName || "-"}
                     </td>
 
                     <td className="px-5 py-4 text-slate-600">

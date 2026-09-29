@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { ClerkLayout } from "../../components/layout/ClerkLayout";
-import { authApi, type ClerkUser } from "../../api/authApi";
+import { authApi, type StaffUser } from "../../api/authApi";
 import { documentationApi, type DocumentationRequest } from "../../api/documentationApi";
 import { agentApi, type ChatMessage } from "../../api/agentApi";
 
@@ -41,7 +41,7 @@ export const AVAILABLE_SAMPLES = [
 
 export const ClerkCasesPage: React.FC = () => {
   const navigate = useNavigate();
-  const [currentClerk, setCurrentClerk] = useState<ClerkUser | null>(null);
+  const [currentClerk, setCurrentClerk] = useState<StaffUser | null>(null);
   const [requests, setRequests] = useState<DocumentationRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);

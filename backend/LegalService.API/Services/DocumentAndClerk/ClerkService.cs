@@ -52,25 +52,81 @@ public class ClerkService : IClerkService
     }
 
     public async Task<ClerkResponse> CreateClerkAsync(CreateClerkRequest request)
+{
+    var email = request.Email.Trim().ToLowerInvariant();
+
+    // Check duplicate email in Users
+    var existingUser = await _context.Users
+        .AnyAsync(u => u.Email.ToLower() == email);
+
+    if (existingUser)
     {
-        var email = request.Email.Trim().ToLowerInvariant();
+        throw new ArgumentException(
+            $"A user with the email '{request.Email}' already exists."
+        );
+    }
 
-        // Check for duplicate clerk email/username
-        var existingClerk = await _context.Clerks
-            .AnyAsync(c => c.Email != null && c.Email.ToLower() == email);
-        if (existingClerk)
-        {
-            throw new ArgumentException($"A clerk with the username/email '{request.Email}' already exists.");
-        }
+    // Check duplicate Clerk profile
+    var existingClerk = await _context.Clerks
+        .AnyAsync(c =>
+            c.Email != null &&
+            c.Email.ToLower() == email);
 
-        // Hash the admin-provided password
-        var passwordHash = _passwordService.HashPassword(request.Password);
+    if (existingClerk)
+    {
+        throw new ArgumentException(
+            $"A clerk with the username/email '{request.Email}' already exists."
+        );
+    }
 
-        var clerk = new Clerk
+    // Find Clerk role
+    var clerkRole = await _context.Roles
+        .FirstOrDefaultAsync(r =>
+            r.Name.ToLower() == "clerk");
+
+    if (clerkRole == null)
+    {
+        throw new InvalidOperationException(
+            "Clerk role does not exist in the Roles table."
+        );
+    }
+
+    await using var transaction =
+        await _context.Database.BeginTransactionAsync();
+
+    try
+    {
+        // Create User account
+        var user = new User
         {
             Name = request.GetEffectiveName(),
             Email = email,
-            PasswordHash = passwordHash,
+            PasswordHash = _passwordService.HashPassword(request.Password),
+            Role = "Clerk",
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow
+        };
+
+        await _context.Users.AddAsync(user);
+
+        // Save first to get UserId
+        await _context.SaveChangesAsync();
+
+        // Create UserRole
+        var userRole = new UserRole
+        {
+            UserId = user.UserId,
+            RoleId = clerkRole.Id
+        };
+
+        await _context.UserRoles.AddAsync(userRole);
+
+        // Create Clerk profile
+        var clerk = new Clerk
+        {
+            UserId = user.UserId,
+            Name = user.Name,
+            Email = user.Email,
             Contact = request.Contact.Trim(),
             Department = request.Department.Trim(),
             IsActive = true,
@@ -79,12 +135,21 @@ public class ClerkService : IClerkService
         };
 
         await _context.Clerks.AddAsync(clerk);
+
         await _context.SaveChangesAsync();
+
+        await transaction.CommitAsync();
 
         NotifyClerkAccountCreated(clerk, request.Password);
 
         return MapToResponse(clerk);
     }
+    catch
+    {
+        await transaction.RollbackAsync();
+        throw;
+    }
+}
 
     private void NotifyClerkAccountCreated(Clerk clerk, string rawPassword)
     {
@@ -125,45 +190,112 @@ public class ClerkService : IClerkService
         }
     }
 
-    public async Task<ClerkResponse?> UpdateClerkAsync(int clerkId, UpdateClerkRequest request)
+    public async Task<ClerkResponse?> UpdateClerkAsync(
+    int clerkId,
+    UpdateClerkRequest request)
+{
+    var clerk = await _context.Clerks
+        .Include(c => c.DocumentationRequests)
+        .FirstOrDefaultAsync(c => c.ClerkId == clerkId);
+
+    if (clerk == null)
+        return null;
+
+    User? user = null;
+
+    if (clerk.UserId.HasValue)
     {
-        var clerk = await _context.Clerks
-            .Include(c => c.DocumentationRequests)
-            .FirstOrDefaultAsync(c => c.ClerkId == clerkId);
-
-        if (clerk == null)
-            return null;
-
-        if (!string.IsNullOrWhiteSpace(request.Name))
-            clerk.Name = request.Name.Trim();
-
-        if (!string.IsNullOrWhiteSpace(request.Email))
-        {
-            var newEmail = request.Email.Trim().ToLowerInvariant();
-            var duplicate = await _context.Clerks
-                .AnyAsync(c => c.ClerkId != clerkId && c.Email != null && c.Email.ToLower() == newEmail);
-            if (duplicate)
-                throw new ArgumentException($"Another clerk already has the email '{request.Email}'.");
-            clerk.Email = newEmail;
-        }
-
-        if (!string.IsNullOrWhiteSpace(request.Password))
-        {
-            clerk.PasswordHash = _passwordService.HashPassword(request.Password);
-        }
-
-        if (request.IsActive.HasValue)
-        {
-            clerk.IsActive = request.IsActive.Value;
-        }
-
-        clerk.Contact = request.Contact.Trim();
-        clerk.Department = request.Department.Trim();
-        clerk.UpdatedAt = DateTime.UtcNow;
-
-        await _context.SaveChangesAsync();
-        return MapToResponse(clerk);
+        user = await _context.Users
+            .FirstOrDefaultAsync(u =>
+                u.UserId == clerk.UserId.Value);
     }
+
+    // Update name
+    if (!string.IsNullOrWhiteSpace(request.Name))
+    {
+        var newName = request.Name.Trim();
+
+        clerk.Name = newName;
+
+        if (user != null)
+        {
+            user.Name = newName;
+        }
+    }
+
+    // Update email
+    if (!string.IsNullOrWhiteSpace(request.Email))
+    {
+        var newEmail =
+            request.Email.Trim().ToLowerInvariant();
+
+        var duplicateUser = await _context.Users
+            .AnyAsync(u =>
+                u.UserId != clerk.UserId &&
+                u.Email.ToLower() == newEmail);
+
+        if (duplicateUser)
+        {
+            throw new ArgumentException(
+                $"Another account already has the email '{request.Email}'."
+            );
+        }
+
+        var duplicateClerk = await _context.Clerks
+            .AnyAsync(c =>
+                c.ClerkId != clerkId &&
+                c.Email != null &&
+                c.Email.ToLower() == newEmail);
+
+        if (duplicateClerk)
+        {
+            throw new ArgumentException(
+                $"Another clerk already has the email '{request.Email}'."
+            );
+        }
+
+        clerk.Email = newEmail;
+
+        if (user != null)
+        {
+            user.Email = newEmail;
+        }
+    }
+
+    // Update password in Users table
+    if (!string.IsNullOrWhiteSpace(request.Password))
+    {
+        if (user == null)
+        {
+            throw new InvalidOperationException(
+                "This Clerk does not have a linked User account."
+            );
+        }
+
+        user.PasswordHash =
+            _passwordService.HashPassword(request.Password);
+    }
+
+    // Update active state
+    if (request.IsActive.HasValue)
+    {
+        clerk.IsActive = request.IsActive.Value;
+    }
+
+    // Update profile fields
+    clerk.Contact = request.Contact.Trim();
+    clerk.Department = request.Department.Trim();
+    clerk.UpdatedAt = DateTime.UtcNow;
+
+    if (user != null)
+    {
+        user.UpdatedAt = DateTime.UtcNow;
+    }
+
+    await _context.SaveChangesAsync();
+
+    return MapToResponse(clerk);
+}
 
     public async Task<bool> DeactivateClerkAsync(int clerkId)
     {

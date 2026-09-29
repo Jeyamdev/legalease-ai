@@ -33,34 +33,210 @@ public class AuthController : ControllerBase
 
 
 
-    [HttpPost("register")]
-    public async Task<IActionResult> Register([FromBody] RegisterRequest request)
+  [HttpPost("signup")]
+public async Task<IActionResult> Register([FromBody] RegisterRequest request)
+{
+    await using var transaction =
+        await _context.Database.BeginTransactionAsync();
+
+    try
     {
-        if (string.IsNullOrWhiteSpace(request.Email) || string.IsNullOrWhiteSpace(request.Password))
-            return BadRequest(new { message = "Email and password are required." });
+        // ---------------------------------------------------------
+        // Basic validation
+        // ---------------------------------------------------------
 
-        var normalizedEmail = request.Email.Trim().ToLowerInvariant();
+        if (string.IsNullOrWhiteSpace(request.Email) ||
+            string.IsNullOrWhiteSpace(request.Password))
+        {
+            return BadRequest(new
+            {
+                message = "Email and password are required."
+            });
+        }
 
-        // Check existing email
+        if (string.IsNullOrWhiteSpace(request.Role))
+        {
+            return BadRequest(new
+            {
+                message = "Role is required."
+            });
+        }
+
+        var normalizedEmail = request.Email
+            .Trim()
+            .ToLowerInvariant();
+
+        // ---------------------------------------------------------
+        // Check duplicate email
+        // ---------------------------------------------------------
+
         var existingUser = await _context.Users
-         .FirstOrDefaultAsync(x => x.Email != null &&
-                              x.Email.ToLower() == normalizedEmail);
+            .FirstOrDefaultAsync(u =>
+                u.Email.ToLower() == normalizedEmail);
 
         if (existingUser != null)
         {
-            return BadRequest(new { message = "Email already exists." });
+            return BadRequest(new
+            {
+                message = "Email already exists."
+            });
         }
 
-        // Hash password
-        var passwordHash = _passwordService.HashPassword(request.Password);
+        // ---------------------------------------------------------
+        // Validate role
+        // ---------------------------------------------------------
 
-        var roleName = "Customer";
+        var allowedRoles = new[]
+        {
+            "Lawyer",
+            "Clerk",
+            "Customer"
+        };
 
-        var fullName = string.IsNullOrWhiteSpace(request.FullName)
-            ? normalizedEmail.Split('@')[0]
-            : request.FullName.Trim();
+        var roleName = allowedRoles.FirstOrDefault(r =>
+            r.Equals(
+                request.Role.Trim(),
+                StringComparison.OrdinalIgnoreCase
+            )
+        );
 
-        // Create user
+        if (roleName == null)
+        {
+            return BadRequest(new
+            {
+                message = "Invalid role."
+            });
+        }
+
+        // ---------------------------------------------------------
+        // Lawyer validation BEFORE creating User
+        // ---------------------------------------------------------
+
+        string? normalizedLicense = null;
+
+        if (roleName.Equals(
+            "Lawyer",
+            StringComparison.OrdinalIgnoreCase))
+        {
+            if (string.IsNullOrWhiteSpace(request.PhoneNumber))
+            {
+                return BadRequest(new
+                {
+                    message = "Phone number is required for lawyer registration."
+                });
+            }
+
+            if (string.IsNullOrWhiteSpace(request.Qualification))
+            {
+                return BadRequest(new
+                {
+                    message = "Qualification is required for lawyer registration."
+                });
+            }
+
+            if (request.Experience < 0)
+            {
+                return BadRequest(new
+                {
+                    message = "Experience cannot be negative."
+                });
+            }
+
+            if (string.IsNullOrWhiteSpace(request.LicenseNumber))
+            {
+                return BadRequest(new
+                {
+                    message = "License number is required for lawyer registration."
+                });
+            }
+
+            normalizedLicense =
+                request.LicenseNumber.Trim();
+
+            var licenseExists = await _context.Lawyers
+                .AnyAsync(l =>
+                    l.LicenseNumber == normalizedLicense);
+
+            if (licenseExists)
+            {
+                return BadRequest(new
+                {
+                    message = "This license number is already registered."
+                });
+            }
+        }
+
+        // ---------------------------------------------------------
+        // Clerk validation BEFORE creating User
+        // ---------------------------------------------------------
+
+        if (roleName.Equals(
+            "Clerk",
+            StringComparison.OrdinalIgnoreCase))
+        {
+            if (string.IsNullOrWhiteSpace(request.Contact))
+            {
+                return BadRequest(new
+                {
+                    message = "Contact number is required for clerk registration."
+                });
+            }
+
+            if (string.IsNullOrWhiteSpace(request.Department))
+            {
+                return BadRequest(new
+                {
+                    message = "Department is required for clerk registration."
+                });
+            }
+
+            var existingClerk = await _context.Clerks
+                .FirstOrDefaultAsync(c =>
+                    c.Email != null &&
+                    c.Email.ToLower() == normalizedEmail);
+
+            if (existingClerk != null)
+            {
+                return BadRequest(new
+                {
+                    message = "A clerk account with this email already exists."
+                });
+            }
+        }
+
+        // ---------------------------------------------------------
+        // Find role from Roles table
+        // ---------------------------------------------------------
+
+        var role = await _context.Roles
+            .FirstOrDefaultAsync(r =>
+                r.Name.ToLower() == roleName.ToLower());
+
+        if (role == null)
+        {
+            return BadRequest(new
+            {
+                message =
+                    $"Role '{roleName}' does not exist in the Roles table."
+            });
+        }
+
+        // ---------------------------------------------------------
+        // Build common account values
+        // ---------------------------------------------------------
+
+        var fullName =
+            string.IsNullOrWhiteSpace(request.FullName)
+                ? normalizedEmail.Split('@')[0]
+                : request.FullName.Trim();
+
+        var passwordHash =
+            _passwordService.HashPassword(request.Password);
+
+        // ---------------------------------------------------------
+        // Create User
+        // ---------------------------------------------------------
+
         var user = new User
         {
             Name = fullName,
@@ -71,119 +247,350 @@ public class AuthController : ControllerBase
             UpdatedAt = DateTime.UtcNow
         };
 
-        await _context.Users.AddAsync(user);
+        _context.Users.Add(user);
+
+        // Save so PostgreSQL generates UserId.
+        // Still inside transaction.
         await _context.SaveChangesAsync();
+
+        // ---------------------------------------------------------
+        // Create UserRole
+        // ---------------------------------------------------------
+
+        var userRole = new UserRole
+        {
+            UserId = user.UserId,
+            RoleId = role.Id
+        };
+
+        _context.UserRoles.Add(userRole);
+
+        // ---------------------------------------------------------
+        // Create Lawyer profile
+        // ---------------------------------------------------------
+
+        Guid? lawyerId = null;
+
+        if (roleName.Equals(
+            "Lawyer",
+            StringComparison.OrdinalIgnoreCase))
+        {
+            lawyerId = Guid.NewGuid();
+
+            var lawyer = new Lawyer
+            {
+                LawyerId = lawyerId.Value,
+
+                UserId = user.UserId,
+
+                Name = user.Name,
+                Email = user.Email,
+
+                PhoneNumber =
+                    request.PhoneNumber!.Trim(),
+
+                Qualification =
+                    request.Qualification!.Trim(),
+
+                Experience =
+                    request.Experience,
+
+                LicenseNumber =
+                    normalizedLicense!,
+
+                ProfileDescription =
+                    request.ProfileDescription?.Trim()
+                    ?? string.Empty,
+
+                Status = "Pending",
+
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = null
+            };
+
+            _context.Lawyers.Add(lawyer);
+        }
+
+        // ---------------------------------------------------------
+        // Create Clerk profile
+        // ---------------------------------------------------------
+
+
+        if (roleName.Equals(
+            "Clerk",
+            StringComparison.OrdinalIgnoreCase))
+        {
+            var clerk = new Clerk
+            {
+                Name = user.Name,
+                Email = user.Email,
+
+                Contact =
+                    request.Contact!.Trim(),
+
+                Department =
+                    request.Department!.Trim(),
+
+                IsActive = true,
+
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow,
+
+                UserId = user.UserId,
+
+            };
+
+            _context.Clerks.Add(clerk);
+
+            // ClerkId will be available after SaveChangesAsync()
+        }
+
+        // ---------------------------------------------------------
+        // Save UserRole + Lawyer + Clerk
+        // ---------------------------------------------------------
+
+        await _context.SaveChangesAsync();
+
+        // ---------------------------------------------------------
+        // Commit everything
+        // ---------------------------------------------------------
+
+        await transaction.CommitAsync();
+
+        // ---------------------------------------------------------
+        // Success response
+        // ---------------------------------------------------------
 
         return Ok(new
         {
-            message = "User registered successfully",
+            message = $"{roleName} registered successfully",
             userId = user.UserId,
+            lawyerId = lawyerId?.ToString(),
             name = user.Name,
             email = user.Email,
             role = user.Role
         });
     }
+    catch (DbUpdateException ex)
+    {
+        await transaction.RollbackAsync();
 
+        Console.WriteLine(
+            "========== SIGNUP DATABASE ERROR =========="
+        );
+
+        Console.WriteLine(ex.ToString());
+
+        Console.WriteLine("INNER ERROR:");
+
+        Console.WriteLine(
+            ex.InnerException?.Message
+        );
+
+        Console.WriteLine(
+            "==========================================="
+        );
+
+        return StatusCode(500, new
+        {
+            message =
+                ex.InnerException?.Message
+                ?? "Database error occurred while creating the account."
+        });
+    }
+    catch (Exception ex)
+    {
+        await transaction.RollbackAsync();
+
+        Console.WriteLine(
+            "========== SIGNUP ERROR =========="
+        );
+
+        Console.WriteLine(ex.ToString());
+
+        Console.WriteLine(
+            "=================================="
+        );
+
+        return StatusCode(500, new
+        {
+            message = ex.Message
+        });
+    }
+}
     /// <summary>
     /// Authenticate a user or clerk using their email/username and password.
     /// </summary>
     [HttpPost("login")]
-    public async Task<IActionResult> Login([FromBody] LoginRequest request)
+public async Task<IActionResult> Login([FromBody] LoginRequest request)
+{
+    if (string.IsNullOrWhiteSpace(request.Email) ||
+        string.IsNullOrWhiteSpace(request.Password))
     {
-        if (string.IsNullOrWhiteSpace(request.Email) || string.IsNullOrWhiteSpace(request.Password))
-            return BadRequest(new { message = "Email/Username and password are required." });
-
-        var email = request.Email.Trim().ToLowerInvariant();
-
-        // 1. Check Clerks
-        var clerk = await _context.Clerks.FirstOrDefaultAsync(c => c.Email != null && c.Email.ToLower() == email);
-        if (clerk != null)
+        return BadRequest(new
         {
-            if (!clerk.IsActive)
-                return Unauthorized(new { message = "Clerk account is currently deactivated." });
-
-            bool passwordValid = !string.IsNullOrEmpty(clerk.PasswordHash)
-                && _passwordService.VerifyPassword(request.Password, clerk.PasswordHash);
-
-            if (!passwordValid && email == "clerk@legalease.com" && (request.Password == "ClerkPassword123!" || request.Password == "Clerk@1234"))
-            {
-                passwordValid = true;
-            }
-
-            if (!passwordValid)
-                return Unauthorized(new { message = "Invalid email or password." });
-
-            var token = _jwtService.GenerateToken(
-                clerk.ClerkId,
-                clerk.Email!,
-                "Clerk"
-            );
-
-            return Ok(new
-            {
-                token,
-                userId = clerk.ClerkId,
-                name = clerk.Name,
-                email = clerk.Email,
-                role = "Clerk",
-                department = clerk.Department,
-                contact = clerk.Contact,
-                message = "Login successful"
-            });
-        }
-
-        // 2. Check Users
-        var user = await _context.Users.FirstOrDefaultAsync(u => u.Email.ToLower() == email);
-        if (user != null)
-        {
-            bool valid = string.IsNullOrEmpty(user.PasswordHash)
-                || _passwordService.VerifyPassword(request.Password, user.PasswordHash);
-
-            if (!valid && email == "admin@legalease.com" && (request.Password == "AdminPassword123!" || request.Password == "Admin@1234"))
-            {
-                valid = true;
-            }
-
-            if (!valid && email == "clerk@legalease.com" && (request.Password == "ClerkPassword123!" || request.Password == "Clerk@1234"))
-            {
-                valid = true;
-            }
-
-            if (!valid)
-                return Unauthorized(new { message = "Invalid email or password." });
-
-            var role = user.Role ?? "Customer";
-
-            Guid? lawyerId = null;
-            if (role.Equals("Lawyer", StringComparison.OrdinalIgnoreCase))
-            {
-                var lawyer = await _context.Lawyers.FirstOrDefaultAsync(l => l.Email != null && l.Email.ToLower() == email);
-                if (lawyer != null)
-                {
-                    lawyerId = lawyer.LawyerId;
-                }
-            }
-
-            var token = _jwtService.GenerateToken(
-                user.UserId,
-                user.Email,
-                role
-            );
-
-            return Ok(new
-            {
-                token,
-                userId = user.UserId,
-                lawyerId = lawyerId?.ToString(),
-                name = user.Name,
-                email = user.Email,
-                role,
-                message = "Login successful"
-            });
-        }
-
-        return Unauthorized(new { message = "No account found with this email/username." });
+            message = "Email/Username and password are required."
+        });
     }
+
+    var email = request.Email
+        .Trim()
+        .ToLowerInvariant();
+
+    // ---------------------------------------------------------
+    // Authenticate from Users table only
+    // ---------------------------------------------------------
+
+    var user = await _context.Users
+        .FirstOrDefaultAsync(u =>
+            u.Email.ToLower() == email);
+
+    if (user == null)
+    {
+        return Unauthorized(new
+        {
+            message = "No account found with this email/username."
+        });
+    }
+
+    // ---------------------------------------------------------
+    // Verify password
+    // ---------------------------------------------------------
+
+    var valid = !string.IsNullOrWhiteSpace(user.PasswordHash)
+        && _passwordService.VerifyPassword(
+            request.Password,
+            user.PasswordHash
+        );
+
+    // Keep existing admin fallback temporarily
+    if (!valid &&
+        email == "admin@legalease.com" &&
+        (request.Password == "AdminPassword123!" ||
+         request.Password == "Admin@1234"))
+    {
+        valid = true;
+    }
+
+    // Keep existing seeded clerk fallback temporarily
+    if (!valid &&
+        email == "clerk@legalease.com" &&
+        (request.Password == "ClerkPassword123!" ||
+         request.Password == "Clerk@1234"))
+    {
+        valid = true;
+    }
+
+    if (!valid)
+    {
+        return Unauthorized(new
+        {
+            message = "Invalid email or password."
+        });
+    }
+
+    var role = user.Role ?? "Customer";
+
+    // ---------------------------------------------------------
+    // Role-specific profile data
+    // ---------------------------------------------------------
+
+    Guid? lawyerId = null;
+    int? clerkId = null;
+
+    string? department = null;
+    string? contact = null;
+
+    // ---------------------------------------------------------
+    // Lawyer profile
+    // ---------------------------------------------------------
+
+    if (role.Equals(
+        "Lawyer",
+        StringComparison.OrdinalIgnoreCase))
+    {
+        var lawyer = await _context.Lawyers
+            .FirstOrDefaultAsync(l =>
+                l.UserId == user.UserId);
+
+        if (lawyer == null)
+        {
+            return Unauthorized(new
+            {
+                message = "Lawyer profile not found."
+            });
+        }
+
+        lawyerId = lawyer.LawyerId;
+    }
+
+    // ---------------------------------------------------------
+    // Clerk profile
+    // ---------------------------------------------------------
+
+    if (role.Equals(
+        "Clerk",
+        StringComparison.OrdinalIgnoreCase))
+    {
+        var clerk = await _context.Clerks
+            .FirstOrDefaultAsync(c =>
+                c.UserId == user.UserId);
+
+        if (clerk == null)
+        {
+            return Unauthorized(new
+            {
+                message = "Clerk profile not found."
+            });
+        }
+
+        if (!clerk.IsActive)
+        {
+            return Unauthorized(new
+            {
+                message = "Clerk account is currently deactivated."
+            });
+        }
+
+        clerkId = clerk.ClerkId;
+        department = clerk.Department;
+        contact = clerk.Contact;
+    }
+
+    // ---------------------------------------------------------
+    // Generate JWT
+    // ---------------------------------------------------------
+
+    var token = _jwtService.GenerateToken(
+        user.UserId,
+        user.Email,
+        role
+    );
+
+    // ---------------------------------------------------------
+    // Response
+    // ---------------------------------------------------------
+
+    return Ok(new
+    {
+        token,
+
+        userId = user.UserId,
+
+        lawyerId = lawyerId?.ToString(),
+
+        clerkId,
+
+        name = user.Name,
+        email = user.Email,
+        role,
+
+        department,
+        contact,
+
+        message = "Login successful"
+    });
+}
 
     /// <summary>
     /// Retrieve user profile by user ID.

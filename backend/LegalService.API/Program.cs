@@ -206,7 +206,7 @@ using (var scope = app.Services.CreateScope())
         var passwordService = scope.ServiceProvider.GetRequiredService<LegalService.API.Authentication.Services.IPasswordService>();
         await DbInitializer.SeedCategoriesAsync(dbContext);
         await DbInitializer.SeedDocumentationServicesAsync(dbContext);
-        await DbInitializer.SeedStaffAccountsAsync(dbContext, passwordService);
+        await DbInitializer.SeedStaffAccountsAsync(dbContext, passwordService,app.Configuration);
     }
     catch (Exception ex)
     {

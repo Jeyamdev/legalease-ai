@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import type { ReactNode } from "react";
 import { Link, Navigate, Outlet } from "react-router-dom";
 import { useSession } from "../hooks/session";
+import { authApi } from "../../../api/authApi";
 export const buttonClass =
   "rounded-md bg-navy-900 px-4 py-2 text-white disabled:opacity-50";
 export const inputClass =
@@ -105,8 +106,21 @@ export function ConfirmDialog({
 }
 export function AdminLayout() {
   const session = useSession();
-  if (!session.token || !session.roles.includes("Admin"))
-    return <Navigate to="/admin/login" replace />;
+  const admin = authApi.getCurrentAdmin();
+  const isAdmin =
+    authApi.isAdminAuthenticated() ||
+    Boolean(session.token && session.roles.some((r) => r.toLowerCase() === "admin"));
+
+  useEffect(() => {
+    if (isAdmin && !session.token) {
+      const token = localStorage.getItem("token") || "";
+      if (token) {
+        session.signIn(token, [admin?.role || "Admin"]);
+      }
+    }
+  }, [isAdmin, session, admin]);
+
+  if (!isAdmin) return <Navigate to="/login" replace />;
   return (
     <div className="min-h-screen bg-paper">
       <header className="bg-navy-900 p-5 text-white">

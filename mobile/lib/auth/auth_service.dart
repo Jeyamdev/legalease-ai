@@ -40,6 +40,11 @@ class AuthService {
     final data = response is Map<String, dynamic> ? response : <String, dynamic>{};
     final user = UserModel.fromJson(data);
 
+    if (user.role != "Customer") {
+      throw Exception(
+        "Only customers can access this mobile application"
+      );
+    }
     if (user.token != null && user.token!.isNotEmpty) {
       await ApiClient.saveToken(user.token!);
     }
@@ -55,15 +60,14 @@ class AuthService {
     required String fullName,
     required String email,
     required String password,
-    String role = 'User',
   }) async {
     final response = await ApiClient.post(
-      '/api/auth/register',
+      '/api/auth/signup',
       {
         'fullName': fullName.trim(),
         'email': email.trim(),
         'password': password,
-        'role': role,
+        'role': 'Customer',
       },
     );
 
@@ -72,7 +76,7 @@ class AuthService {
       userId: (data['userId'] ?? data['id'] ?? '').toString(),
       fullName: fullName,
       email: email,
-      role: (data['role'] ?? role).toString(),
+      role: (data['role'] ?? 'Customer').toString(),
       token: data['token']?.toString(),
     );
   }
@@ -82,5 +86,6 @@ class AuthService {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_userKey);
     currentUser.value = null;
+    debugPrint("LOGOUT DONE - currentUser: ${currentUser.value}");
   }
 }

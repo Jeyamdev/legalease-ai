@@ -168,9 +168,15 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     border: OutlineInputBorder(),
                   ),
                   validator: (val) {
+                    if (val == null || val.trim().isEmpty) {
+                      return 'Please enter your full name';
+                    }
+
                     if (val.trim().length < 3) {
                       return 'Name must contain at least 3 characters';
-                      }
+                    }
+
+                    return null;
                   },
                 ),
                 const SizedBox(height: 16),

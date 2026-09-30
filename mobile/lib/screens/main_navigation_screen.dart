@@ -124,7 +124,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
 
                 await AuthService.logout();
 
-                if (!context.mounted) return;
+                if (!mounted) return;
 
                 Navigator.pushNamedAndRemoveUntil(
                   context,

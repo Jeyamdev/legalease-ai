@@ -47,7 +47,7 @@ class _LoginScreenState extends State<LoginScreen> {
     });
     try {
       final res = await http
-          .get(Uri.parse('${ApiConfig.backendUrl.value}/api/documentation-services'))
+          .get(Uri.parse('${ApiConfig.backendUrl.value}/api/health'))
           .timeout(const Duration(seconds: 5));
       if (mounted) {
         setState(() {
@@ -56,7 +56,7 @@ class _LoginScreenState extends State<LoginScreen> {
             _serverStatusText = 'Server connected';
           } else {
             _serverStatus = _ServerStatus.offline;
-            _serverStatusText = 'Server returned ${res.statusCode}';
+            _serverStatusText = 'Server unavailable';
           }
         });
       }
@@ -77,13 +77,7 @@ class _LoginScreenState extends State<LoginScreen> {
     super.dispose();
   }
 
-  void _fillDemoCredentials(String email, String password) {
-    setState(() {
-      _emailController.text = email;
-      _passwordController.text = password;
-      _errorMessage = null;
-    });
-  }
+  
 
   Widget _buildServerBadge() {
     Color bgColor;
@@ -150,10 +144,16 @@ class _LoginScreenState extends State<LoginScreen> {
             else if (_serverStatus == _ServerStatus.online) ...
               [
                 const SizedBox(width: 4),
-                GestureDetector(
-                  onTap: _checkServer,
-                  child: Icon(Icons.refresh_rounded, size: 14, color: fgColor),
-                ),
+                IconButton(
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(),
+                  onPressed: _checkServer,
+                  icon: Icon(
+                    Icons.refresh_rounded,
+                    size: 14,
+                    color: fgColor,
+                  ),
+                )
               ],
           ],
         ),
@@ -162,7 +162,20 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   Future<void> _handleLogin() async {
+
     if (!_formKey.currentState!.validate()) return;
+
+
+    if (_serverStatus == _ServerStatus.offline) {
+
+      setState(() {
+        _errorMessage =
+            "Server is unavailable. Please try again later.";
+      });
+
+      return;
+    }
+
 
     setState(() {
       _loading = true;
@@ -187,11 +200,31 @@ class _LoginScreenState extends State<LoginScreen> {
       }
     } catch (e) {
       if (mounted) {
+
+        String message = "Login failed. Please try again.";
+
+        final error = e.toString().toLowerCase();
+
+        if (error.contains("401") ||
+            error.contains("invalid email") ||
+            error.contains("invalid password")) {
+
+          message = "Invalid email or password.";
+
+        } else if (error.contains("socket") ||
+              error.contains("connection") ||
+              error.contains("failed host") ||
+              error.contains("timeout")) {
+
+          message = "Unable to connect to server.";
+
+        }
+
         setState(() {
-          _errorMessage = e.toString().replaceFirst('Exception: ', '');
+          _errorMessage = message;
         });
       }
-    } finally {
+  } finally {
       if (mounted) {
         setState(() => _loading = false);
       }
@@ -279,76 +312,13 @@ class _LoginScreenState extends State<LoginScreen> {
                 ),
                 const SizedBox(height: 4),
                 const Text(
-                  'Sign in to your client or counsel account',
+                  'Sign in to your account',
                   textAlign: TextAlign.center,
                   style: TextStyle(fontSize: 13, color: AppTheme.textMuted),
                 ),
                 const SizedBox(height: 20),
 
-                // Fast Demo Logins Section
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: const Color(0xFFE2E8F0)),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        'QUICK DEMO ACCOUNTS',
-                        style: TextStyle(
-                          fontSize: 10,
-                          fontWeight: FontWeight.bold,
-                          color: AppTheme.goldDark,
-                          letterSpacing: 0.6,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: OutlinedButton(
-                              style: OutlinedButton.styleFrom(
-                                padding: const EdgeInsets.symmetric(vertical: 8),
-                                side: const BorderSide(color: Color(0xFFCBD5E1)),
-                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                              ),
-                              onPressed: () => _fillDemoCredentials('customer@legalease.com', 'CustomerPassword123!'),
-                              child: const Text('👤 Customer', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: AppTheme.primaryNavy)),
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: OutlinedButton(
-                              style: OutlinedButton.styleFrom(
-                                padding: const EdgeInsets.symmetric(vertical: 8),
-                                side: const BorderSide(color: Color(0xFFCBD5E1)),
-                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                              ),
-                              onPressed: () => _fillDemoCredentials('lawyer@legalease.com', 'LawyerPassword123!'),
-                              child: const Text('⚖️ Lawyer', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: AppTheme.primaryNavy)),
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: OutlinedButton(
-                              style: OutlinedButton.styleFrom(
-                                padding: const EdgeInsets.symmetric(vertical: 8),
-                                side: const BorderSide(color: Color(0xFFCBD5E1)),
-                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                              ),
-                              onPressed: () => _fillDemoCredentials('clerk@legalease.com', 'ClerkPassword123!'),
-                              child: const Text('🏛️ Clerk', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: AppTheme.primaryNavy)),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 16),
+                
 
                 // Server Status Banner
                 _buildServerBadge(),
@@ -386,7 +356,19 @@ class _LoginScreenState extends State<LoginScreen> {
                     border: OutlineInputBorder(),
                   ),
                   validator: (val) {
-                    if (val == null || val.trim().isEmpty) return 'Please enter your email';
+
+                    if (val == null || val.trim().isEmpty) {
+                      return 'Please enter your email';
+                    }
+
+                    final emailRegex = RegExp(
+                      r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$'
+                    );
+
+                    if (!emailRegex.hasMatch(val.trim())) {
+                      return 'Enter a valid email address';
+                    }
+
                     return null;
                   },
                 ),

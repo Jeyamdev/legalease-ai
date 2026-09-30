@@ -1,6 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
-
+using System.ComponentModel.DataAnnotations;
 using LegalService.API.Data;
 using LegalService.API.DTOs.Requests;
 using LegalService.API.Authentication.Services;
@@ -51,6 +51,13 @@ public async Task<IActionResult> Register([FromBody] RegisterRequest request)
             return BadRequest(new
             {
                 message = "Email and password are required."
+            });
+        }
+        if (!new EmailAddressAttribute().IsValid(request.Email))
+        {
+            return BadRequest(new
+            {
+                message = "Invalid email format."
             });
         }
 
@@ -462,32 +469,19 @@ public async Task<IActionResult> Login([FromBody] LoginRequest request)
             request.Password,
             user.PasswordHash
         );
-
-    // Keep existing admin fallback temporarily
-    if (!valid &&
-        email == "admin@legalease.com" &&
-        (request.Password == "AdminPassword123!" ||
-         request.Password == "Admin@1234"))
-    {
-        valid = true;
-    }
-
-    // Keep existing seeded clerk fallback temporarily
-    if (!valid &&
-        email == "clerk@legalease.com" &&
-        (request.Password == "ClerkPassword123!" ||
-         request.Password == "Clerk@1234"))
-    {
-        valid = true;
-    }
-
     if (!valid)
-    {
-        return Unauthorized(new
         {
-            message = "Invalid email or password."
-        });
-    }
+            return Unauthorized(new
+            {
+                message = "Invalid email or password."
+            });
+        }
+    
+   
+     
+    
+
+    
 
     var role = user.Role ?? "Customer";
 

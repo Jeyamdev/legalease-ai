@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../config/app_theme.dart';
 import 'auth_service.dart';
-import '../screens/main_navigation_screen.dart';
 
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({super.key});
@@ -27,67 +26,73 @@ class _RegisterScreenState extends State<RegisterScreen> {
     super.dispose();
   }
 
-  Future<void> _handleRegister() async {
-    if (!_formKey.currentState!.validate()) return;
+ Future<void> _handleRegister() async {
+  if (!_formKey.currentState!.validate()) return;
 
-    setState(() {
-      _loading = true;
-      _errorMessage = null;
-    });
+  setState(() {
+    _loading = true;
+    _errorMessage = null;
+  });
 
-    try {
-      final email = _emailController.text.trim();
-      final password = _passwordController.text;
+  try {
+    await AuthService.register(
+      fullName: _fullNameController.text.trim(),
+      email: _emailController.text.trim(),
+      password: _passwordController.text,
+    );
 
-      await AuthService.register(
-        fullName: _fullNameController.text.trim(),
-        email: email,
-        password: password,
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Registration successful. Please login with your credentials.'
+          ),
+          backgroundColor: Color(0xFF16A34A),
+        ),
       );
 
-      // Auto sign-in immediately so user is taken straight into the app
-      try {
-        await AuthService.login(
-          email: email,
-          password: password,
-        );
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Registration successful! Welcome to LegalEase.'),
-              backgroundColor: Color(0xFF16A34A),
-            ),
-          );
-          Navigator.pushAndRemoveUntil(
-            context,
-            MaterialPageRoute(builder: (_) => const MainNavigationScreen()),
-            (route) => false,
-          );
-          return;
-        }
-      } catch (_) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Registration successful! Please sign in with your credentials.'),
-              backgroundColor: Color(0xFF16A34A),
-            ),
-          );
-          Navigator.pop(context);
-        }
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() {
-          _errorMessage = e.toString().replaceFirst('Exception: ', '');
-        });
-      }
-    } finally {
-      if (mounted) {
-        setState(() => _loading = false);
-      }
+      Navigator.pop(context);
+    }
+
+  } catch (e) {
+
+    if (mounted) {
+
+      String message =
+          "Registration failed. Please try again.";
+
+      final error = e.toString().toLowerCase();
+
+      if (error.contains("already exists") ||
+    error.contains("already registered")) {
+
+    message =
+      "An account with this email already exists.";
+}
+      else if (error.contains("socket") ||
+         error.contains("connection") ||
+         error.contains("timeout")) {
+
+    message =
+      "Unable to connect to server.";
+}
+
+      setState(() {
+        _errorMessage = message;
+      });
+    }
+
+  } finally {
+
+    if (mounted) {
+      setState(() {
+        _loading = false;
+      });
     }
   }
+}
+
+
 
   @override
   Widget build(BuildContext context) {
@@ -163,8 +168,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     border: OutlineInputBorder(),
                   ),
                   validator: (val) {
-                    if (val == null || val.trim().isEmpty) return 'Please enter your full name';
-                    return null;
+                    if (val.trim().length < 3) {
+                      return 'Name must contain at least 3 characters';
+                      }
                   },
                 ),
                 const SizedBox(height: 16),
@@ -178,8 +184,19 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     border: OutlineInputBorder(),
                   ),
                   validator: (val) {
-                    if (val == null || val.trim().isEmpty) return 'Please enter your email';
-                    if (!val.contains('@')) return 'Please enter a valid email address';
+
+                    if (val == null || val.trim().isEmpty) {
+                      return 'Please enter your email';
+                    }
+
+                    final emailRegex = RegExp(
+                      r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$'
+                    );
+
+                    if (!emailRegex.hasMatch(val.trim())) {
+                      return 'Please enter a valid email address';
+                    }
+
                     return null;
                   },
                 ),
@@ -192,17 +209,66 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     labelText: 'Password',
                     prefixIcon: const Icon(Icons.lock_outline),
                     suffixIcon: IconButton(
-                      icon: Icon(_obscurePassword ? Icons.visibility_off : Icons.visibility),
-                      onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
+                      icon: Icon(
+                        _obscurePassword
+                            ? Icons.visibility_off
+                            : Icons.visibility,
+                      ),
+                      onPressed: () {
+                        setState(() {
+                          _obscurePassword = !_obscurePassword;
+                        });
+                      },
                     ),
                     border: const OutlineInputBorder(),
                   ),
                   validator: (val) {
-                    if (val == null || val.length < 6) return 'Password must be at least 6 characters';
+
+                    if (val == null || val.isEmpty) {
+                      return 'Please enter a password';
+                    }
+
+                    if (val.length < 8) {
+                      return 'Password must be at least 8 characters';
+                    }
+
+                    if (!RegExp(r'[A-Z]').hasMatch(val)) {
+                      return 'Password needs an uppercase letter';
+                    }
+
+                    if (!RegExp(r'[a-z]').hasMatch(val)) {
+                      return 'Password needs a lowercase letter';
+                    }
+
+                    if (!RegExp(r'[0-9]').hasMatch(val)) {
+                      return 'Password needs a number';
+                    }
+
+                    if (!RegExp(r'[!@#$%^&*]').hasMatch(val)) {
+                      return 'Password needs a special character';
+                    }
+
                     return null;
                   },
                 ),
+
+                const SizedBox(height: 8),
+
+                const Text(
+                  'Password requirements:\n'
+                  '• Minimum 8 characters\n'
+                  '• At least one uppercase letter\n'
+                  '• At least one lowercase letter\n'
+                  '• At least one number\n'
+                  '• At least one special character',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: AppTheme.textMuted,
+                  ),
+                ),
+
                 const SizedBox(height: 24),
+
 
                 ElevatedButton(
                   onPressed: _loading ? null : _handleRegister,

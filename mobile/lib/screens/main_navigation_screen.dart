@@ -119,14 +119,19 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
               leading: const Icon(Icons.logout, color: Color(0xFFDC2626)),
               title: const Text('Sign Out', style: TextStyle(color: Color(0xFFDC2626), fontWeight: FontWeight.bold)),
               onTap: () async {
+
                 Navigator.pop(ctx);
-                final scaffold = ScaffoldMessenger.of(context);
+
                 await AuthService.logout();
-                if (!mounted) return;
-                setState(() {});
-                scaffold.showSnackBar(
-                  const SnackBar(content: Text('Signed out.')),
+
+                if (!context.mounted) return;
+
+                Navigator.pushNamedAndRemoveUntil(
+                  context,
+                  '/login',
+                  (route) => false,
                 );
+
               },
             ),
           ],

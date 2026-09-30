@@ -40,6 +40,7 @@ dependencies:
   shared_preferences: ^2.5.5
   intl: ^0.20.3
   http_parser: ^4.1.2
+  flutter_dotenv: ^6.0.1
 
 dev_dependencies:
   flutter_test:
@@ -67,6 +68,7 @@ flutter:
     - assets/
     - assets/sample_documents/
     - assets/careers/
+    - .env
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images

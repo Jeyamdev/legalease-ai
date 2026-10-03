@@ -54,7 +54,7 @@ class LawyerService {
       'licenseNumber': licenseNumber.trim(),
       'profileDescription': profileDescription?.trim(),
       'category': category.trim(),
-      if (specializationId != null) 'specializationId': specializationId,
+      'specializationId': ?specializationId,
       'password': password?.trim(),
     };
 

@@ -28,11 +28,15 @@ class _LawyerProfileScreenState extends State<LawyerProfileScreen> {
   Widget build(BuildContext context) => Scaffold(
     appBar: AppBar(title: const Text('Lawyer profile')),
     body: FutureBuilder<Lawyer>(future: _profile, builder: (context, snapshot) {
-      if (snapshot.hasError) return Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
-        const Text('Unable to load this lawyer profile.'),
-        TextButton(onPressed: () => setState(_load), child: const Text('Retry')),
-      ]));
-      if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
+      if (snapshot.hasError) {
+        return Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
+          const Text('Unable to load this lawyer profile.'),
+          TextButton(onPressed: () => setState(_load), child: const Text('Retry')),
+        ]));
+      }
+      if (!snapshot.hasData) {
+        return const Center(child: CircularProgressIndicator());
+      }
       final lawyer = snapshot.data!;
       return ListView(padding: const EdgeInsets.all(20), children: [
         Text(lawyer.name, style: Theme.of(context).textTheme.headlineSmall),
@@ -86,11 +90,13 @@ class _RecordedAvailabilityState extends State<_RecordedAvailability> {
   @override
   Widget build(BuildContext context) => FutureBuilder<List<AvailabilitySlot>>(
     future: _availability, builder: (context, slots) {
-      if (slots.hasError) return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        const Text('Unable to load availability.'),
-        TextButton(onPressed: () => setState(() => _availability = LawyerService.getRecordedAvailability(widget.lawyerId)),
-          child: const Text('Retry availability')),
-      ]);
+      if (slots.hasError) {
+        return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          const Text('Unable to load availability.'),
+          TextButton(onPressed: () => setState(() => _availability = LawyerService.getRecordedAvailability(widget.lawyerId)),
+            child: const Text('Retry availability')),
+        ]);
+      }
       if (!slots.hasData) return const LinearProgressIndicator();
       if (slots.data!.isEmpty) return const Text('No upcoming unbooked slots recorded.');
       return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [

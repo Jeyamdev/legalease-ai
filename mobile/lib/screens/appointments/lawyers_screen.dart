@@ -498,8 +498,10 @@ class _LawyersScreenState extends State<LawyersScreen> {
                 if (_selectedCategory != 'All') TextButton(
                   onPressed: () {
                     final specialization = _specializations.where((s) => s.name == _selectedCategory).firstOrNull;
-                    if (specialization != null) Navigator.push(context, MaterialPageRoute(
-                      builder: (_) => SpecializationDetailsScreen(specialization: specialization)));
+                    if (specialization != null) {
+                      Navigator.push(context, MaterialPageRoute(
+                        builder: (_) => SpecializationDetailsScreen(specialization: specialization)));
+                    }
                   }, child: const Text('View specialization details')),
                 // Types of laws tabs
                 const Text(

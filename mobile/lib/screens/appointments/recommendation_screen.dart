@@ -47,9 +47,11 @@ class _RecommendationScreenState extends State<RecommendationScreen> {
     try {
       final data = await ApiClient.get('/api/appointments/available-slots',
           queryParams: {'lawyerId': _lawyerId!, 'date': _dateText});
-      if (mounted) setState(() => _slots = (data as List)
-          .map((item) => Map<String, dynamic>.from(item as Map))
-          .where((item) => item['isBooked'] != true).toList());
+      if (mounted) {
+        setState(() => _slots = (data as List)
+            .map((item) => Map<String, dynamic>.from(item as Map))
+            .where((item) => item['isBooked'] != true).toList());
+      }
     } catch (e) {
       if (mounted) setState(() => _error = e.toString());
     } finally { if (mounted) setState(() => _busy = false); }
@@ -83,7 +85,9 @@ class _RecommendationScreenState extends State<RecommendationScreen> {
         OutlinedButton.icon(onPressed: _busy ? null : () async {
           final picked = await showDatePicker(context: context, initialDate: DateTime.now(),
               firstDate: DateTime.now(), lastDate: DateTime.now().add(const Duration(days: 365)));
-          if (picked != null) setState(() => _date = picked);
+          if (picked != null) {
+            setState(() => _date = picked);
+          }
         }, icon: const Icon(Icons.calendar_today), label: Text(_dateText.isEmpty ? 'Optional date' : _dateText)),
         ElevatedButton(onPressed: _busy ? null : _find, child: const Text('Get recommendations')),
         if (_busy) const Center(child: CircularProgressIndicator()),
@@ -92,18 +96,28 @@ class _RecommendationScreenState extends State<RecommendationScreen> {
           Text('Status: ${_workflow!['status']}', style: const TextStyle(fontWeight: FontWeight.bold)),
           for (final warning in (_workflow!['warnings'] as List? ?? [])) Text(warning.toString()),
           if (recommendations.isEmpty) const Text('No eligible lawyers matched.'),
-          for (final value in recommendations) Builder(builder: (context) {
-            final item = Map<String, dynamic>.from(value as Map);
-            final id = item['lawyerId'].toString();
-            return Card(child: ListTile(
-              title: Text('Lawyer $id · score ${item['score']}'),
-              subtitle: Text(item['reason']?.toString() ?? ''),
-              trailing: _workflow!['status'] == 'AWAITING_APPROVAL'
-                  ? Radio<String>(value: id, groupValue: _lawyerId,
-                      onChanged: (value) => setState(() { _lawyerId = value; _slots = []; _slotId = null; }))
-                  : null,
-            ));
-          }),
+          RadioGroup<String>(
+            groupValue: _lawyerId,
+            onChanged: (value) {
+              if (_workflow!['status'] != 'AWAITING_APPROVAL') {
+                return;
+              }
+              setState(() { _lawyerId = value; _slots = []; _slotId = null; });
+            },
+            child: Column(children: [
+              for (final value in recommendations) Builder(builder: (context) {
+                final item = Map<String, dynamic>.from(value as Map);
+                final id = item['lawyerId'].toString();
+                return Card(child: ListTile(
+                  title: Text('Lawyer $id · score ${item['score']}'),
+                  subtitle: Text(item['reason']?.toString() ?? ''),
+                  trailing: _workflow!['status'] == 'AWAITING_APPROVAL'
+                      ? Radio<String>(value: id)
+                      : null,
+                ));
+              }),
+            ]),
+          ),
           if (_workflow!['status'] == 'AWAITING_APPROVAL' && _lawyerId != null) ...[
             const SizedBox(height: 12),
             const Text('Select a customer and an available slot to approve and book.'),

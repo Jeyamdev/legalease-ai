@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import '../lib/models/lawyer.dart';
-import '../lib/screens/appointments/specialization_details_screen.dart';
+import 'package:legal_service_app/models/lawyer.dart';
+import 'package:legal_service_app/screens/appointments/specialization_details_screen.dart';
 
 void main() {
   test('lawyer details preserve backend services and specialization descriptions', () {

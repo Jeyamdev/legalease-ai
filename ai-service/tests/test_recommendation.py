@@ -6,7 +6,7 @@ class Data:
     async def catalogs(self):
         return [{'id': 2, 'name': 'Family Law', 'description': 'Divorce and custody'}], [{'id': 2, 'name': 'Divorce filing', 'description': '', 'category': 'Family Law'}]
 
-    async def candidates(self, specialization_ids, service_ids, date=None):
+    async def candidates(self, specialization_ids, date=None):
         return [dict(lawyerId=str(i), status=status, experience=experience, availableDates=['2030-01-01'] if i == 3 else [],
                      specializations=[{'id': 2, 'name': 'Family Law'}], legalServices=[])
                 for i, status, experience in [(1, 'Active', 10), (2, 'Inactive', 30), (3, 'Active', 2)]
@@ -36,6 +36,18 @@ class AgentTests(unittest.IsolatedAsyncioTestCase):
         result = await build_recommendation_graph(Data(), self.Classifier()).ainvoke({'requirement': 'unrecognized topic'})
         self.assertEqual([], result['recommendations'])
         self.assertTrue(result['warnings'])
+        self.assertEqual('UNSUPPORTED', result['status'])
+        self.assertEqual(['parse_requirement', 'validate_category'], [step['step'] for step in result['trace']])
+
+    async def test_legacy_service_link_does_not_change_score_or_order(self):
+        class ServiceLinkedData(Data):
+            async def candidates(self, specialization_ids, date=None):
+                lawyers = await super().candidates(specialization_ids, date)
+                lawyers[0]['legalServices'] = [{'id': 2, 'name': 'Divorce filing'}]
+                return lawyers
+        result = await build_recommendation_graph(ServiceLinkedData(), self.Classifier()).ainvoke({'requirement': 'divorce'})
+        self.assertEqual([60, 52], [item['score'] for item in result['recommendations']])
+        self.assertNotIn('Service match', result['recommendations'][0]['reason'])
 
     async def test_no_available_candidates(self):
         result = await build_recommendation_graph(Data(), self.Classifier()).ainvoke({'requirement': 'divorce', 'date': '2030-02-02'})

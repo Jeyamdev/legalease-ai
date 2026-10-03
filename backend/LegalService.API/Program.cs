@@ -10,6 +10,7 @@ using LegalService.API.Middleware;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
 using System.Text;
+using System.Text.Json;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -138,17 +139,30 @@ builder.Services.AddAuthentication(options =>
 
 var app = builder.Build();
 
-if (args.Contains("--seed-demo-lawyers"))
+if (args.Contains("--seed-demo-lawyers") || args.Contains("--report-demo-lawyers") ||
+    args.Contains("--normalize-synthetic-lawyers"))
 {
     if (!app.Environment.IsDevelopment())
-        throw new InvalidOperationException("Demo lawyers may only be seeded in Development.");
+        throw new InvalidOperationException("Demo data commands may only run in Development.");
     using var scope = app.Services.CreateScope();
-    var result = await DemoLawyerSeeder.SeedAsync(
-        scope.ServiceProvider.GetRequiredService<ApplicationDbContext>(),
-        scope.ServiceProvider.GetRequiredService<IPasswordService>(),
-        DateOnly.FromDateTime(DateTime.UtcNow));
-    Console.WriteLine($"Demo seed: {result.LawyersCreated} lawyers, {result.AvailabilitiesCreated} availability windows, " +
-        $"{result.SlotsCreated} slots added. Customer UUID: {result.CustomerId}");
+    var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+    if (args.Contains("--normalize-synthetic-lawyers"))
+    {
+        var result = await DemoLawyerSeeder.NormalizeSyntheticIdentitiesAsync(db);
+        Console.WriteLine($"Synthetic identities normalized: {result.LawyerNamesChanged} lawyer names, " +
+            $"{result.LicensesChanged} licenses, {result.AccountNamesChanged} account names.");
+    }
+    if (args.Contains("--seed-demo-lawyers"))
+    {
+        var result = await DemoLawyerSeeder.SeedAsync(db,
+            scope.ServiceProvider.GetRequiredService<IPasswordService>(),
+            DateOnly.FromDateTime(DateTime.UtcNow));
+        Console.WriteLine($"Demo seed: {result.LawyersCreated} lawyers, {result.ServicesCreated} legal services, " +
+            $"{result.AvailabilitiesCreated} availability windows, {result.SlotsCreated} slots added. " +
+            $"Customer created: {result.CustomerCreated}. Customer UUID: {result.CustomerId}");
+    }
+    Console.WriteLine(JsonSerializer.Serialize(await DemoLawyerSeeder.ReportAsync(db),
+        new JsonSerializerOptions { WriteIndented = true }));
     return;
 }
 

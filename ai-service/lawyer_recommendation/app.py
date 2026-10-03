@@ -56,10 +56,9 @@ async def recommend(request: RecommendationRequest, x_internal_key: str = Header
         async def catalogs(self):
             return request.specializations, request.services
 
-        async def candidates(self, specialization_ids, service_ids, date=None):
+        async def candidates(self, specialization_ids, date=None):
             return [lawyer for lawyer in request.candidates
-                    if (any(s['id'] in specialization_ids for s in lawyer['specializations'])
-                        or any(s['id'] in service_ids for s in lawyer['legalServices']))
+                    if any(s['id'] in specialization_ids for s in lawyer['specializations'])
                     and (not date or date in lawyer.get('availableDates', []))]
 
     try:

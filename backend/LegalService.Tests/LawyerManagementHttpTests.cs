@@ -117,6 +117,11 @@ public sealed class LawyerManagementHttpTests : IAsyncLifetime
         Assert.Equal(status, (int)(await _client.PostAsJsonAsync("/api/specializations", new { name = "New" })).StatusCode);
         Assert.Equal(status, (int)(await _client.PutAsJsonAsync($"/api/specializations/{_specId}", new { name = "New" })).StatusCode);
         Assert.Equal(status, (int)(await _client.DeleteAsync($"/api/specializations/{_specId}")).StatusCode);
+        Assert.Equal(status, (int)(await _client.PostAsJsonAsync("/api/legal-services", new { serviceName = "New", category = "Property" })).StatusCode);
+        Assert.Equal(status, (int)(await _client.PutAsJsonAsync("/api/legal-services/1", new { serviceName = "New", category = "Property" })).StatusCode);
+        Assert.Equal(status, (int)(await _client.DeleteAsync("/api/legal-services/1")).StatusCode);
+        Assert.Equal(status, (int)(await _client.GetAsync("/api/legal-services/1")).StatusCode);
+        Assert.Equal(status, (int)(await _client.GetAsync("/api/legal-services/admin")).StatusCode);
     }
 
     [Fact]
@@ -206,6 +211,8 @@ public sealed class LawyerManagementHttpTests : IAsyncLifetime
         var oldSpecs = await _client.GetFromJsonAsync<JsonElement>("/api/lawyers/specializations");
         var newSpecs = await _client.GetFromJsonAsync<JsonElement>("/api/specializations");
         Assert.Equal(oldSpecs.GetRawText(), newSpecs.GetRawText());
+        Assert.Equal(1, newSpecs[0].GetProperty("lawyerCount").GetInt32());
+        Assert.Equal(1, newSpecs[0].GetProperty("legalServiceCount").GetInt32());
         var services = await _client.GetFromJsonAsync<JsonElement>("/api/legal-services");
         Assert.Equal("Property consultation", services[0].GetProperty("serviceName").GetString());
         var oldSearch = await _client.GetFromJsonAsync<JsonElement>($"/api/lawyers?specialization={_specId}&search=original&date=2030-01-05");
@@ -217,6 +224,80 @@ public sealed class LawyerManagementHttpTests : IAsyncLifetime
         empty = await _client.GetFromJsonAsync<JsonElement>("/api/lawyers/search?date=2030-01-06");
         Assert.Equal(0, empty.GetArrayLength());
         Assert.Equal(HttpStatusCode.BadRequest, (await _client.GetAsync("/api/lawyers/search?date=invalid")).StatusCode);
+    }
+
+    [Fact]
+    public async Task PagedDirectoryCombinesSearchSpecializationAndRecordedAvailability()
+    {
+        var ids = new List<Guid>();
+        using (var scope = _app.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+            for (var i = 1; i <= 24; i++)
+            {
+                var id = Guid.NewGuid();
+                ids.Add(id);
+                db.Lawyers.Add(new Lawyer
+                {
+                    LawyerId = id,
+                    Name = i <= 12 ? $"Property Lawyer {i:00}" : $"Employment Lawyer {i:00}",
+                    Email = $"lawyer{i:00}@example.test",
+                    LicenseNumber = $"BAR-{i + 100}",
+                    Status = "Active",
+                    LawyerSpecializations = [new LawyerSpecialization
+                    {
+                        LawyerId = id, SpecializationId = i <= 12 ? _specId : _otherSpecId
+                    }]
+                });
+                if (i <= 6)
+                    db.LawyerAvailabilities.Add(new LawyerAvailability
+                    {
+                        AvailabilityId = Guid.NewGuid(), LawyerId = id, Date = _date,
+                        AvailabilitySlots = [new AvailabilitySlot
+                        {
+                            SlotId = Guid.NewGuid(), StartTime = new(11, 0), EndTime = new(11, 30)
+                        }]
+                    });
+            }
+            await db.SaveChangesAsync();
+        }
+
+        var first = await _client.GetFromJsonAsync<JsonElement>("/api/lawyers/search?page=1&pageSize=10");
+        var second = await _client.GetFromJsonAsync<JsonElement>("/api/lawyers/search?page=2&pageSize=10");
+        Assert.Equal(10, first.GetProperty("items").GetArrayLength());
+        Assert.Equal(10, second.GetProperty("items").GetArrayLength());
+        Assert.Equal(25, first.GetProperty("totalItems").GetInt32());
+        Assert.Equal(25, first.GetProperty("totalLawyers").GetInt32());
+        Assert.Equal(3, first.GetProperty("totalPages").GetInt32());
+        Assert.NotEqual(first.GetProperty("items")[0].GetProperty("lawyerId").GetGuid(),
+            second.GetProperty("items")[0].GetProperty("lawyerId").GetGuid());
+
+        var search = await _client.GetFromJsonAsync<JsonElement>("/api/lawyers/search?search=Property%20Lawyer&page=2&pageSize=10");
+        Assert.Equal(12, search.GetProperty("totalItems").GetInt32());
+        Assert.Equal(2, search.GetProperty("items").GetArrayLength());
+        var emailSearch = await _client.GetFromJsonAsync<JsonElement>("/api/lawyers/search?search=lawyer01%40example.test&page=1&pageSize=10");
+        Assert.Equal(1, emailSearch.GetProperty("totalItems").GetInt32());
+
+        var category = await _client.GetFromJsonAsync<JsonElement>($"/api/lawyers/search?specialization={_specId}&page=2&pageSize=10");
+        Assert.Equal(13, category.GetProperty("totalItems").GetInt32());
+        Assert.Equal(3, category.GetProperty("items").GetArrayLength());
+
+        var available = await _client.GetFromJsonAsync<JsonElement>($"/api/lawyers/search?specialization={_specId}&search=Property%20Lawyer&date={_date:yyyy-MM-dd}&page=2&pageSize=2");
+        Assert.Equal(6, available.GetProperty("totalItems").GetInt32());
+        Assert.Equal(2, available.GetProperty("items").GetArrayLength());
+        Assert.Equal(3, available.GetProperty("totalPages").GetInt32());
+
+        Assert.Equal(HttpStatusCode.BadRequest, (await _client.GetAsync("/api/lawyers/search?page=0&pageSize=10")).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await _client.GetAsync("/api/lawyers/search?page=1&pageSize=101")).StatusCode);
+
+        SignIn("Admin");
+        var last = await _client.GetFromJsonAsync<JsonElement>("/api/lawyers/search?page=13&pageSize=2");
+        var lastId = last.GetProperty("items")[0].GetProperty("lawyerId").GetGuid();
+        Assert.Contains(lastId, ids);
+        Assert.Equal(HttpStatusCode.OK, (await _client.DeleteAsync($"/api/lawyers/{lastId}")).StatusCode);
+        var afterDelete = await _client.GetFromJsonAsync<JsonElement>("/api/lawyers/search?page=13&pageSize=2");
+        Assert.Equal(0, afterDelete.GetProperty("items").GetArrayLength());
+        Assert.Equal(12, afterDelete.GetProperty("totalPages").GetInt32());
     }
 
     [Fact]
@@ -257,6 +338,180 @@ public sealed class LawyerManagementHttpTests : IAsyncLifetime
         var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
         await DbInitializer.SeedCategoriesAsync(db);
         Assert.Equal(2, await db.Specializations.CountAsync());
+    }
+
+    [Fact]
+    public async Task PracticeAreaDetailsShowRecordedRelationshipsAndEnforceAdminAccess()
+    {
+        Assert.Equal(HttpStatusCode.Unauthorized, (await _client.GetAsync($"/api/specializations/{_specId}")).StatusCode);
+        SignIn("Customer");
+        Assert.Equal(HttpStatusCode.Forbidden, (await _client.GetAsync($"/api/specializations/{_specId}")).StatusCode);
+        SignIn("Admin");
+        var details = await _client.GetFromJsonAsync<JsonElement>($"/api/specializations/{_specId}");
+        Assert.Equal("Property", details.GetProperty("name").GetString());
+        Assert.Equal("Recorded property description", details.GetProperty("description").GetString());
+        Assert.Equal(1, details.GetProperty("lawyerCount").GetInt32());
+        Assert.Equal(_lawyerId, details.GetProperty("lawyers")[0].GetProperty("lawyerId").GetGuid());
+        Assert.Equal("Original", details.GetProperty("lawyers")[0].GetProperty("name").GetString());
+        Assert.Equal(1, details.GetProperty("legalServiceCount").GetInt32());
+        Assert.Equal("Property consultation", details.GetProperty("legalServices")[0].GetProperty("serviceName").GetString());
+        var empty = await _client.GetFromJsonAsync<JsonElement>($"/api/specializations/{_otherSpecId}");
+        Assert.Equal(0, empty.GetProperty("lawyerCount").GetInt32());
+        Assert.Equal(0, empty.GetProperty("legalServices").GetArrayLength());
+        Assert.Equal(HttpStatusCode.NotFound, (await _client.GetAsync("/api/specializations/99999")).StatusCode);
+    }
+
+    [Fact]
+    public async Task PracticeAreaUsageMatchesCaseInsensitiveServiceCategoryAndBlocksDeletion()
+    {
+        using (var scope = _app.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+            db.LegalServices.Add(new LegalService.API.Models.Entities.LegalService
+            {
+                ServiceName = "Employment advice", Category = "employment"
+            });
+            await db.SaveChangesAsync();
+        }
+        var list = await _client.GetFromJsonAsync<JsonElement>("/api/specializations");
+        var employment = list.EnumerateArray().Single(s => s.GetProperty("specializationId").GetInt32() == _otherSpecId);
+        Assert.Equal(1, employment.GetProperty("legalServiceCount").GetInt32());
+        SignIn("Admin");
+        var blocked = await _client.DeleteAsync($"/api/specializations/{_otherSpecId}");
+        Assert.Equal(HttpStatusCode.Conflict, blocked.StatusCode);
+        var conflict = await blocked.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(0, conflict.GetProperty("lawyerCount").GetInt32());
+        Assert.Equal(1, conflict.GetProperty("legalServiceCount").GetInt32());
+        Assert.Equal(HttpStatusCode.OK, (await _client.PutAsJsonAsync($"/api/specializations/{_otherSpecId}",
+            new { name = "Employment Law", description = "Workplace matters" })).StatusCode);
+        var services = await _client.GetFromJsonAsync<JsonElement>("/api/legal-services");
+        Assert.Contains(services.EnumerateArray(), s => s.GetProperty("serviceName").GetString() == "Employment advice"
+            && s.GetProperty("category").GetString() == "Employment Law");
+    }
+
+    [Fact]
+    public async Task AdminManagesLegalServicesButCannotDeleteAssignedRecords()
+    {
+        SignIn("Admin");
+        var create = await _client.PostAsJsonAsync("/api/legal-services", new
+        {
+            serviceName = "Title review",
+            description = "Review land title records",
+            category = "Property"
+        });
+        Assert.Equal(HttpStatusCode.Created, create.StatusCode);
+        var id = (await create.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("legalServiceId").GetInt32();
+        Assert.Equal(HttpStatusCode.OK, (await _client.PutAsJsonAsync($"/api/legal-services/{id}", new
+        {
+            serviceName = "Title review updated",
+            description = "Updated",
+            category = "Employment"
+        })).StatusCode);
+        Assert.Equal(HttpStatusCode.NoContent, (await _client.DeleteAsync($"/api/legal-services/{id}")).StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, (await _client.PostAsJsonAsync("/api/legal-services", new { serviceName = "PROPERTY CONSULTATION", category = "Property" })).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await _client.PostAsJsonAsync("/api/legal-services", new { serviceName = " ", category = "Property" })).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await _client.PostAsJsonAsync("/api/legal-services", new { serviceName = "Unknown category service", category = "Missing" })).StatusCode);
+
+        using var scope = _app.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        var assigned = await db.LegalServices.SingleAsync();
+        db.LawyerLegalServices.Add(new LawyerLegalService { LawyerId = _lawyerId, LegalServiceId = assigned.LegalServiceId });
+        await db.SaveChangesAsync();
+        var blocked = await _client.DeleteAsync($"/api/legal-services/{assigned.LegalServiceId}");
+        Assert.Equal(HttpStatusCode.Conflict, blocked.StatusCode);
+        var conflict = await blocked.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(1, conflict.GetProperty("lawyerCount").GetInt32());
+        Assert.Equal(1, conflict.GetProperty("legacyReferenceCount").GetInt32());
+        Assert.Contains("legacy lawyer-service references", conflict.GetProperty("message").GetString());
+        Assert.Contains("Property consultation", conflict.GetProperty("message").GetString());
+        var services = await _client.GetFromJsonAsync<JsonElement>("/api/legal-services");
+        Assert.Equal(1, services[0].GetProperty("lawyerCount").GetInt32());
+    }
+
+    [Fact]
+    public async Task EligibleLawyersDoNotBlockLegalServiceDeletion()
+    {
+        SignIn("Admin");
+        var create = await _client.PostAsJsonAsync("/api/legal-services", new
+        {
+            serviceName = "Property eligibility example", category = "Property", description = "Recorded service"
+        });
+        Assert.Equal(HttpStatusCode.Created, create.StatusCode);
+        var id = (await create.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("legalServiceId").GetInt32();
+        var details = await _client.GetFromJsonAsync<JsonElement>($"/api/legal-services/{id}");
+        Assert.Equal(1, details.GetProperty("eligibleLawyerCount").GetInt32());
+        Assert.Equal(0, details.GetProperty("legacyReferenceCount").GetInt32());
+        Assert.Equal(HttpStatusCode.NoContent, (await _client.DeleteAsync($"/api/legal-services/{id}")).StatusCode);
+    }
+
+    [Fact]
+    public async Task AdminLegalServiceEligibilityFollowsActivePracticeAreaWithoutAssignments()
+    {
+        Guid otherId = Guid.NewGuid();
+        using (var scope = _app.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+            db.Lawyers.Add(new Lawyer
+            {
+                LawyerId = otherId, Name = "Employment lawyer", LicenseNumber = "BAR-EMP", Status = "Active",
+                LawyerSpecializations = [new LawyerSpecialization { LawyerId = otherId, SpecializationId = _otherSpecId }]
+            });
+            db.Lawyers.Add(new Lawyer
+            {
+                LawyerId = Guid.NewGuid(), Name = "Inactive property lawyer", LicenseNumber = "BAR-INACTIVE", Status = "Inactive",
+                LawyerSpecializations = [new LawyerSpecialization { SpecializationId = _specId }]
+            });
+            await db.SaveChangesAsync();
+        }
+        var publicList = await _client.GetFromJsonAsync<JsonElement>("/api/legal-services");
+        Assert.Equal(JsonValueKind.Array, publicList.ValueKind);
+        Assert.Equal(0, publicList[0].GetProperty("lawyerCount").GetInt32());
+        Assert.False(publicList[0].TryGetProperty("eligibleLawyerCount", out _));
+        var serviceId = publicList[0].GetProperty("legalServiceId").GetInt32();
+
+        SignIn("Admin");
+        var adminList = await _client.GetFromJsonAsync<JsonElement>("/api/legal-services/admin");
+        Assert.Equal(1, adminList[0].GetProperty("eligibleLawyerCount").GetInt32());
+        Assert.Equal(0, adminList[0].GetProperty("legacyReferenceCount").GetInt32());
+        var details = await _client.GetFromJsonAsync<JsonElement>($"/api/legal-services/{serviceId}");
+        Assert.Equal("Property consultation", details.GetProperty("serviceName").GetString());
+        Assert.Equal(1, details.GetProperty("eligibleLawyerCount").GetInt32());
+        Assert.Equal(_lawyerId, details.GetProperty("eligibleLawyers")[0].GetProperty("lawyerId").GetGuid());
+        Assert.False(details.TryGetProperty("assignedLawyers", out _));
+        Assert.Equal(HttpStatusCode.NotFound, (await _client.PutAsJsonAsync($"/api/legal-services/{serviceId}/lawyers",
+            new { lawyerIds = new[] { _lawyerId } })).StatusCode);
+
+        using (var scope = _app.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+            db.LawyerLegalServices.Add(new LawyerLegalService { LawyerId = _lawyerId, LegalServiceId = serviceId });
+            await db.SaveChangesAsync();
+        }
+        adminList = await _client.GetFromJsonAsync<JsonElement>("/api/legal-services/admin");
+        Assert.Equal(1, adminList[0].GetProperty("eligibleLawyerCount").GetInt32());
+        Assert.Equal(1, adminList[0].GetProperty("legacyReferenceCount").GetInt32());
+        Assert.Equal(HttpStatusCode.OK, (await _client.PutAsJsonAsync($"/api/legal-services/{serviceId}",
+            new { serviceName = "Property consultation", category = "employment", description = "Changed" })).StatusCode);
+        details = await _client.GetFromJsonAsync<JsonElement>($"/api/legal-services/{serviceId}");
+        Assert.Equal("Employment", details.GetProperty("category").GetString());
+        Assert.Equal(1, details.GetProperty("eligibleLawyerCount").GetInt32());
+        Assert.Equal(otherId, details.GetProperty("eligibleLawyers")[0].GetProperty("lawyerId").GetGuid());
+        Assert.Equal(1, details.GetProperty("legacyReferenceCount").GetInt32());
+        var profile = await _client.GetFromJsonAsync<JsonElement>($"/api/lawyers/{_lawyerId}");
+        Assert.Equal("Property consultation", profile.GetProperty("legalServices")[0].GetProperty("serviceName").GetString());
+
+        var createArea = await _client.PostAsJsonAsync("/api/specializations",
+            new { name = "Empty Practice Area", description = "No registered lawyers" });
+        Assert.Equal(HttpStatusCode.Created, createArea.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await _client.PutAsJsonAsync($"/api/legal-services/{serviceId}",
+            new { serviceName = "Property consultation", category = "Empty Practice Area", description = "Changed again" })).StatusCode);
+        details = await _client.GetFromJsonAsync<JsonElement>($"/api/legal-services/{serviceId}");
+        Assert.Equal(0, details.GetProperty("eligibleLawyerCount").GetInt32());
+        Assert.Empty(details.GetProperty("eligibleLawyers").EnumerateArray());
+        adminList = await _client.GetFromJsonAsync<JsonElement>("/api/legal-services/admin");
+        Assert.Equal(0, adminList[0].GetProperty("eligibleLawyerCount").GetInt32());
+        Assert.Equal(HttpStatusCode.Conflict, (await _client.DeleteAsync($"/api/legal-services/{serviceId}")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await _client.GetAsync("/api/legal-services/99999")).StatusCode);
     }
 
     [Fact]
@@ -320,6 +575,56 @@ public sealed class LawyerManagementHttpTests : IAsyncLifetime
         Assert.Equal(status, (int)(await _client.PostAsJsonAsync("/api/lawyer-recommendations", new { requirement = "Property dispute" })).StatusCode);
         Assert.Equal(status, (int)(await _client.GetAsync($"/api/lawyer-recommendations/{Guid.NewGuid()}")).StatusCode);
         Assert.Equal(status, (int)(await _client.PostAsJsonAsync($"/api/lawyer-recommendations/{Guid.NewGuid()}/approve", new { })).StatusCode);
+        Assert.Equal(status, (int)(await _client.GetAsync("/api/lawyer-recommendations/customers")).StatusCode);
+    }
+
+    [Theory]
+    [InlineData(null, 401)]
+    [InlineData("Customer", 403)]
+    [InlineData("Lawyer", 403)]
+    public async Task OperationalSummaryRequiresAdmin(string? role, int status)
+    {
+        SignIn(role);
+        Assert.Equal(status, (int)(await _client.GetAsync("/api/lawyer-services/summary")).StatusCode);
+    }
+
+    [Fact]
+    public async Task OperationalSummaryUsesCatalogActiveLawyersAndOnlyFutureUnbookedSlots()
+    {
+        SignIn("Admin");
+        using var scope = _app.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        var inactiveId = Guid.NewGuid();
+        db.Lawyers.AddRange(
+            new Lawyer { LawyerId = inactiveId, Name = "Inactive Property", LicenseNumber = "INACTIVE",
+                Status = "Inactive", LawyerSpecializations = [new LawyerSpecialization { SpecializationId = _specId }] },
+            new Lawyer { LawyerId = Guid.NewGuid(), Name = "Pending Employment", LicenseNumber = "PENDING",
+                Status = "Pending", LawyerSpecializations = [new LawyerSpecialization { SpecializationId = _otherSpecId }] });
+        db.LawyerAvailabilities.AddRange(
+            new LawyerAvailability { AvailabilityId = Guid.NewGuid(), LawyerId = _lawyerId,
+                Date = new DateOnly(2020, 1, 1), StartTime = new(9, 0), EndTime = new(10, 0),
+                AvailabilitySlots = [new AvailabilitySlot { SlotId = Guid.NewGuid(), StartTime = new(9, 0), EndTime = new(9, 30) }] },
+            new LawyerAvailability { AvailabilityId = Guid.NewGuid(), LawyerId = inactiveId,
+                Date = _date, StartTime = new(9, 0), EndTime = new(10, 0),
+                AvailabilitySlots = [new AvailabilitySlot { SlotId = Guid.NewGuid(), StartTime = new(9, 0), EndTime = new(9, 30) }] });
+        await db.SaveChangesAsync();
+
+        var summary = await _client.GetFromJsonAsync<JsonElement>("/api/lawyer-services/summary");
+        Assert.Equal(1, summary.GetProperty("activeLawyers").GetInt32());
+        Assert.Equal(3, summary.GetProperty("totalLawyers").GetInt32());
+        Assert.Equal(2, summary.GetProperty("practiceAreas").GetInt32());
+        Assert.Equal(1, summary.GetProperty("legalServices").GetInt32());
+        var rows = summary.GetProperty("coverage").EnumerateArray().ToArray();
+        Assert.Equal(2, rows.Length);
+        var property = rows.Single(row => row.GetProperty("practiceAreaName").GetString() == "Property");
+        Assert.Equal(1, property.GetProperty("activeLawyers").GetInt32());
+        Assert.Equal(1, property.GetProperty("legalServices").GetInt32());
+        Assert.Equal(1, property.GetProperty("futureAvailabilityCount").GetInt32());
+        var employment = rows.Single(row => row.GetProperty("practiceAreaName").GetString() == "Employment");
+        Assert.Equal(0, employment.GetProperty("activeLawyers").GetInt32());
+        Assert.Equal(0, employment.GetProperty("legalServices").GetInt32());
+        Assert.Equal(0, employment.GetProperty("futureAvailabilityCount").GetInt32());
+        Assert.DoesNotContain(rows, row => row.GetProperty("practiceAreaName").GetString() == "Family Law");
     }
 
     [Fact]

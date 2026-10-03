@@ -21,7 +21,7 @@ public class LawyerRecommendationApprovalTests
         await using var db = new ApplicationDbContext(options);
         var lawyerId = Guid.NewGuid();
         var slotId = Guid.NewGuid();
-        var customerId = Guid.NewGuid();
+        var customerId = Guid.Parse("00000000-0000-0000-0000-00000000002a");
         var appointmentId = Guid.NewGuid();
         var date = new DateOnly(2030, 1, 7);
         var workflow = new LawyerRecommendationWorkflow
@@ -32,6 +32,7 @@ public class LawyerRecommendationApprovalTests
             RecommendationsJson = JsonSerializer.Serialize(new[] { new Recommendation(lawyerId, 55, "Recorded category match") })
         };
         db.LawyerRecommendationWorkflows.Add(workflow);
+        db.Users.Add(new User { UserId = 42, Name = "Synthetic Customer", Email = "customer@example.test", Role = "Customer" });
         db.Specializations.Add(new Specialization { SpecializationId = 3, Name = "Property Law" });
         db.Lawyers.Add(new Lawyer { LawyerId = lawyerId, Name = "Synthetic Lawyer", Status = "Active",
             LawyerSpecializations = new List<LawyerSpecialization> { new() { LawyerId = lawyerId, SpecializationId = 3 } },

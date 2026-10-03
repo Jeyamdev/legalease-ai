@@ -7,6 +7,7 @@ interface AdminLayoutProps {
   children: React.ReactNode;
   title: string;
   subtitle?: string;
+  showStats?: boolean;
 }
 
 interface DashboardStats {
@@ -31,8 +32,8 @@ const navItems = [
     ),
   },
   {
-    label: "Lawyer Management",
-    path: "/admin/lawyers",
+    label: "Lawyer & Legal Services",
+    path: "/admin/lawyer-services",
     icon: (
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4">
         <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />
@@ -108,7 +109,7 @@ const navItems = [
   },
 ];
 
-export const AdminLayout: React.FC<AdminLayoutProps> = ({ children, title, subtitle }) => {
+export const AdminLayout: React.FC<AdminLayoutProps> = ({ children, title, subtitle, showStats = true }) => {
   const location = useLocation();
   const navigate = useNavigate();
   const currentAdmin = authApi.getCurrentAdmin();
@@ -148,8 +149,8 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children, title, subti
   };
 
   useEffect(() => {
-    loadStats();
-  }, [location.pathname]);
+    if (showStats) void Promise.resolve().then(loadStats);
+  }, [location.pathname, showStats]);
 
   const statCards = [
     {
@@ -387,7 +388,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children, title, subti
         {/* ─── Main Content Canvas (Scrolls independently) ─── */}
         <div className="flex-1 flex flex-col overflow-y-auto min-w-0">
           {/* KPI stat cards banner (scrolls naturally with page content) */}
-          <div className="bg-white/90 backdrop-blur-md border-b border-slate-200/80 px-6 py-4 shadow-2xs">
+          {showStats && <div className="bg-white/90 backdrop-blur-md border-b border-slate-200/80 px-6 py-4 shadow-2xs">
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 max-w-7xl mx-auto">
               {statCards.map(s => (
                 <div
@@ -416,7 +417,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children, title, subti
                 </div>
               ))}
             </div>
-          </div>
+          </div>}
 
           {/* Page main content */}
           <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8">

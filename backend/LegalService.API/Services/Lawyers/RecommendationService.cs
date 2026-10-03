@@ -25,14 +25,21 @@ public class ApproveRecommendationRequest
     [Required] public Guid SlotId { get; set; }
 }
 
-public record Recommendation(Guid LawyerId, int Score, string Reason);
+public record Recommendation(Guid LawyerId, int Score, string Reason)
+{
+    public string? FullName { get; init; }
+    public string? Qualification { get; init; }
+    public int? YearsExperience { get; init; }
+    public string? PracticeArea { get; init; }
+}
 public record ParsedLegalRequirement(string Requirement, int? CategoryId, string? CategoryName,
     string? Location, string? PreferredDate, List<string> Keywords);
 public record WorkflowEvent(DateTime Timestamp, string Step, string Status, string Summary,
     string? InputSummary = null, string? OutputSummary = null, string? Error = null);
 public record RecommendationResponse(List<Recommendation> Recommendations, List<string> Warnings,
     List<JsonElement> Trace, ParsedLegalRequirement? ParsedRequirement = null, DateOnly? Date = null,
-    Guid? WorkflowId = null, string? Status = null, Guid? AppointmentId = null);
+    Guid? WorkflowId = null, string? Status = null, Guid? AppointmentId = null, Guid? ApprovedLawyerId = null,
+    string? UserRequirement = null);
 
 public interface ILawyerRecommendationService
 {
@@ -77,7 +84,6 @@ public sealed class RecommendationService(HttpClient client, IConfiguration conf
                 {
                     lawyerId = l.LawyerId, status = l.Status, experience = l.Experience,
                     specializations = l.LawyerSpecializations.Select(s => new { id = s.SpecializationId, name = s.Specialization.Name }).ToList(),
-                    legalServices = l.LawyerLegalServices.Select(s => new { id = s.LegalServiceId, name = s.LegalService.ServiceName }).ToList(),
                     availableDates = l.LawyerAvailabilities.Where(a => a.AvailabilitySlots.Any(slot => !slot.IsBooked))
                         .Select(a => a.Date).ToList()
                 }).ToListAsync(ct);
@@ -97,7 +103,7 @@ public sealed class RecommendationService(HttpClient client, IConfiguration conf
             var result = await response.Content.ReadFromJsonAsync<RecommendationResponse>(JsonOptions, ct)
                 ?? throw new ApiException(502, "Invalid recommendation response.");
             if (result.ParsedRequirement is null || result.Recommendations is null || result.Warnings is null || result.Trace is null ||
-                result.Recommendations.Count > request.Limit || result.Recommendations.Any(r => r.LawyerId == Guid.Empty || r.Score < 0 || string.IsNullOrWhiteSpace(r.Reason)))
+                result.Recommendations.Count > request.Limit || result.Recommendations.Any(r => r.LawyerId == Guid.Empty || r.Score is < 0 or > 100 || string.IsNullOrWhiteSpace(r.Reason)))
                 throw new ApiException(502, "Invalid recommendation response.");
 
             var parsed = result.ParsedRequirement;
@@ -123,23 +129,36 @@ public sealed class RecommendationService(HttpClient client, IConfiguration conf
             if (ids.Any(id => !valid.Contains(id)))
                 throw new ApiException(409, "Lawyer data changed. Request fresh recommendations.");
 
-            workflow.Status = ids.Length == 0 ? "NO_MATCH" : "AWAITING_APPROVAL";
+            var profiles = await db.Lawyers.AsNoTracking().Where(l => ids.Contains(l.LawyerId))
+                .Select(l => new { l.LawyerId, l.Name, l.Qualification, l.Experience })
+                .ToDictionaryAsync(l => l.LawyerId, ct);
+            var verifiedRecommendations = result.Recommendations.Select(r => r with
+            {
+                FullName = profiles[r.LawyerId].Name,
+                Qualification = profiles[r.LawyerId].Qualification,
+                YearsExperience = profiles[r.LawyerId].Experience,
+                PracticeArea = parsed.CategoryName
+            }).ToList();
+            workflow.Status = parsed.CategoryId is null ? "UNSUPPORTED" : ids.Length == 0 ? "NO_MATCH" : "AWAITING_APPROVAL";
             workflow.CategoryId = parsed.CategoryId;
             workflow.RequestedDate = effectiveDate;
             workflow.ParsedRequirementJson = JsonSerializer.Serialize(parsed, JsonOptions);
-            workflow.RecommendationsJson = JsonSerializer.Serialize(result.Recommendations, JsonOptions);
+            workflow.RecommendationsJson = JsonSerializer.Serialize(verifiedRecommendations, JsonOptions);
             workflow.WarningsJson = JsonSerializer.Serialize(result.Warnings, JsonOptions);
             foreach (var step in result.Trace)
             {
                 var name = step.TryGetProperty("step", out var property) ? property.GetString() ?? "agent" : "agent";
-                AddEvent(workflow, name, "completed", "LangGraph node completed",
+                var stepStatus = step.TryGetProperty("status", out var statusProperty) ? statusProperty.GetString() : null;
+                AddEvent(workflow, name, stepStatus == "unsupported" ? "UNSUPPORTED" : "COMPLETED", "Recommendation stage recorded",
                     output: step.ToString().Length > 400 ? step.ToString()[..400] : step.ToString());
             }
-            AddEvent(workflow, "await_human_approval", workflow.Status, $"{ids.Length} validated recommendation(s); no booking made",
+            if (parsed.CategoryId is not null)
+                AddEvent(workflow, "backend_validation", "COMPLETED", $"{ids.Length} recommendation(s) revalidated against current database data");
+            if (workflow.Status == "AWAITING_APPROVAL") AddEvent(workflow, "await_human_approval", workflow.Status, $"{ids.Length} validated recommendation(s); no booking made",
                 input: $"Category {parsed.CategoryId?.ToString() ?? "unknown"}; date {effectiveDate?.ToString() ?? "none"}",
                 output: $"Saved recommendation IDs: {string.Join(",", ids)}");
             await db.SaveChangesAsync(ct);
-            return result with { WorkflowId = workflow.WorkflowId, Status = workflow.Status, Date = effectiveDate };
+            return ToResponse(workflow);
         }
         catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
         {
@@ -189,8 +208,17 @@ public sealed class RecommendationService(HttpClient client, IConfiguration conf
             l.LawyerSpecializations.Any(s => s.SpecializationId == workflow.CategoryId), ct);
         if (!lawyerIsEligible)
             throw new ApiException(409, "The selected lawyer is no longer eligible.");
+        const string customerPrefix = "00000000-0000-0000-0000-";
+        var customerText = request.CustomerId.ToString();
+        if (!customerText.StartsWith(customerPrefix, StringComparison.Ordinal) ||
+            !long.TryParse(customerText[customerPrefix.Length..], System.Globalization.NumberStyles.HexNumber,
+                System.Globalization.CultureInfo.InvariantCulture, out var customerNumber) ||
+            customerNumber is <= 0 or > int.MaxValue ||
+            !await db.Users.AsNoTracking().AnyAsync(u => u.UserId == (int)customerNumber && u.Role == "Customer", ct))
+            throw new ApiException(400, "Select an existing customer account.");
         var slotIsEligible = await db.AvailabilitySlots.AsNoTracking().AnyAsync(s => s.SlotId == request.SlotId && !s.IsBooked &&
             s.LawyerAvailability.LawyerId == request.LawyerId &&
+            s.LawyerAvailability.Date >= DateOnly.FromDateTime(DateTime.UtcNow) &&
             (workflow.RequestedDate == null || s.LawyerAvailability.Date == workflow.RequestedDate), ct);
         if (!slotIsEligible)
             throw new ApiException(409, "The selected appointment slot is unavailable or does not match the requested date.");
@@ -226,7 +254,7 @@ public sealed class RecommendationService(HttpClient client, IConfiguration conf
         (JsonSerializer.Deserialize<List<WorkflowEvent>>(w.AuditJson, JsonOptions) ?? [])
             .Select(e => JsonSerializer.SerializeToElement(e, JsonOptions)).ToList(),
         JsonSerializer.Deserialize<ParsedLegalRequirement>(w.ParsedRequirementJson, JsonOptions),
-        w.RequestedDate, w.WorkflowId, w.Status, w.AppointmentId);
+        w.RequestedDate, w.WorkflowId, w.Status, w.AppointmentId, w.ApprovedLawyerId, w.UserRequirement);
 
     private static void AddEvent(LawyerRecommendationWorkflow workflow, string step, string status, string summary,
         string? input = null, string? output = null, string? error = null)

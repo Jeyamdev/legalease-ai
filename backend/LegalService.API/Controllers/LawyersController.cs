@@ -35,8 +35,19 @@ public class LawyersController : ControllerBase
     /// </summary>
     [HttpGet]
     [HttpGet("search")]
-    public async Task<IActionResult> GetLawyers([FromQuery] string? specialization, [FromQuery] string? search, [FromQuery] DateOnly? date = null)
+    public async Task<IActionResult> GetLawyers(
+        [FromQuery] string? specialization,
+        [FromQuery] string? search,
+        [FromQuery] DateOnly? date = null,
+        [FromQuery] int? page = null,
+        [FromQuery] int? pageSize = null)
     {
+        var paged = page.HasValue || pageSize.HasValue;
+        var currentPage = page ?? 1;
+        var size = pageSize ?? 10;
+        if (paged && (currentPage < 1 || size < 1 || size > 100 || currentPage > int.MaxValue / size))
+            return BadRequest(new { message = "Page must be positive and pageSize must be between 1 and 100." });
+
         var query = _context.Lawyers
             .Include(l => l.LawyerSpecializations)
                 .ThenInclude(ls => ls.Specialization)
@@ -63,6 +74,7 @@ public class LawyersController : ControllerBase
             var s = search.Trim().ToLowerInvariant();
             query = query.Where(l =>
                 l.Name.ToLower().Contains(s) ||
+                (l.Email != null && l.Email.ToLower().Contains(s)) ||
                 l.Qualification.ToLower().Contains(s) ||
                 l.ProfileDescription.ToLower().Contains(s) ||
                 l.LicenseNumber.ToLower().Contains(s) ||
@@ -73,8 +85,13 @@ public class LawyersController : ControllerBase
             query = query.Where(l => l.Status == "Active" && l.LawyerAvailabilities.Any(a =>
                 a.Date == date.Value && a.AvailabilitySlots.Any(slot => !slot.IsBooked)));
 
-        var lawyers = await query
-            .OrderBy(l => l.Name)
+        var totalItems = paged ? await query.CountAsync() : 0;
+        var totalLawyers = paged ? await _context.Lawyers.CountAsync() : 0;
+        IQueryable<Lawyer> ordered = query.OrderBy(l => l.Name).ThenBy(l => l.LawyerId);
+        if (paged)
+            ordered = ordered.Skip((currentPage - 1) * size).Take(size);
+
+        var lawyers = await ordered
             .Select(l => new
             {
                 lawyerId = l.LawyerId,
@@ -95,7 +112,17 @@ public class LawyersController : ControllerBase
             })
             .ToListAsync();
 
-        return Ok(lawyers);
+        if (!paged) return Ok(lawyers);
+
+        return Ok(new
+        {
+            items = lawyers,
+            page = currentPage,
+            pageSize = size,
+            totalItems,
+            totalPages = totalItems / size + (totalItems % size == 0 ? 0 : 1),
+            totalLawyers
+        });
     }
 
     /// <summary>
@@ -330,7 +357,8 @@ public class LawyersController : ControllerBase
                 specializationId = s.SpecializationId,
                 name = s.Name,
                 description = s.Description,
-                lawyerCount = s.LawyerSpecializations.Count
+                lawyerCount = s.LawyerSpecializations.Count,
+                legalServiceCount = _context.LegalServices.Count(service => service.Category.ToLower() == s.Name.ToLower())
             })
             .ToListAsync();
 

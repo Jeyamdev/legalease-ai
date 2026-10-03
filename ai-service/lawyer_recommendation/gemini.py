@@ -33,7 +33,8 @@ class GeminiClassifier:
 
         prompt = (
             'You classify a legal issue for lawyer matching, not legal advice. Return structured data only. '
-            'Choose categoryId and categoryName together from the supplied categories, or both null when uncertain. '
+            'Choose categoryId and categoryName together from the supplied categories only when the legal issue clearly belongs to one. '
+            'If the issue belongs to a legal field absent from the catalog, is nonsense, or is uncertain, return both null; do not choose the closest unrelated category. '
             'Never invent category IDs, lawyer IDs, lawyers, availability, or make a booking decision. '
             'Extract a preferredDate only if explicit and unambiguous; use ISO YYYY-MM-DD. '
             'Do not infer facts absent from the user text.\n'

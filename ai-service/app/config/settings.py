@@ -13,6 +13,7 @@ Rules:
 
 from functools import lru_cache
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from model_config import DEFAULT_GEMINI_MODEL
 
 
 class Settings(BaseSettings):
@@ -25,7 +26,7 @@ class Settings(BaseSettings):
 
     # ---- Gemini API ----
     gemini_api_key: str = ""
-    gemini_model: str = "gemini-3.5-flash-lite"
+    gemini_model: str = DEFAULT_GEMINI_MODEL
 
     # ---- ASP.NET Core Backend ----
     backend_api_url: str = "http://localhost:5000"

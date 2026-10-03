@@ -11,22 +11,17 @@ namespace LegalService.API.Migrations
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
-            migrationBuilder.AlterColumn<int>(
-                name: "CustomerId",
-                table: "ServiceRequests",
-                type: "integer",
-                nullable: false,
-                oldClrType: typeof(Guid),
-                oldType: "uuid");
+            migrationBuilder.Sql("""
+                ALTER TABLE "ServiceRequests"
+                ALTER COLUMN "CustomerId" TYPE integer
+                USING 0;
+                """);
 
-            migrationBuilder.AlterColumn<int>(
-                name: "UserId",
-                table: "AuditLogs",
-                type: "integer",
-                nullable: true,
-                oldClrType: typeof(Guid),
-                oldType: "uuid",
-                oldNullable: true);
+            migrationBuilder.Sql("""
+                ALTER TABLE "AuditLogs"
+                ALTER COLUMN "UserId" TYPE integer
+                USING NULL;
+                """);
 
             migrationBuilder.UpdateData(
                 table: "DocumentationServices",
@@ -74,22 +69,17 @@ namespace LegalService.API.Migrations
         /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
-            migrationBuilder.AlterColumn<Guid>(
-                name: "CustomerId",
-                table: "ServiceRequests",
-                type: "uuid",
-                nullable: false,
-                oldClrType: typeof(int),
-                oldType: "integer");
+            migrationBuilder.Sql("""
+                ALTER TABLE "ServiceRequests"
+                ALTER COLUMN "CustomerId" TYPE uuid
+                USING '00000000-0000-0000-0000-000000000000'::uuid;
+                """);
 
-            migrationBuilder.AlterColumn<Guid>(
-                name: "UserId",
-                table: "AuditLogs",
-                type: "uuid",
-                nullable: true,
-                oldClrType: typeof(int),
-                oldType: "integer",
-                oldNullable: true);
+            migrationBuilder.Sql("""
+                ALTER TABLE "AuditLogs"
+                ALTER COLUMN "UserId" TYPE uuid
+                USING NULL;
+                """);
 
             migrationBuilder.UpdateData(
                 table: "DocumentationServices",

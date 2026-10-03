@@ -6,12 +6,13 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "test": "playwright test",
+    "test:member1": "node --test tests/member1-routes.test.mjs",
+    "test:e2e": "playwright test",
     "lint": "eslint .",
-    "preview": "vite preview",
-    "test": "playwright test"
+    "preview": "vite preview"
   },
   "dependencies": {
-    "@hookform/resolvers": "^5.0.0",
     "@tailwindcss/vite": "^4.3.3",
     "axios": "^1.19.0",
     "lucide-react": "^1.47.0",
@@ -20,8 +21,7 @@
     "react-hook-form": "^7.86.0",
     "react-router-dom": "^7.18.2",
     "tailwindcss": "^4.3.3",
-    "zod": "^4.4.3",
-    "zustand": "^5.0.0"
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

@@ -1,38 +1,4 @@
 import { test, expect } from "@playwright/test";
-import { loginSchema, registerSchema } from "../src/features/auth/schemas";
-
-test("registration validation matches backend and confirms password", () => {
-  const valid = {
-    fullName: "Test Lawyer",
-    email: "lawyer@example.com",
-    password: "valid-password",
-    confirmPassword: "valid-password",
-  };
-
-  expect(registerSchema.safeParse(valid).success).toBe(true);
-
-  for (const update of [
-    { fullName: " " },
-    { email: "bad" },
-    { password: "short", confirmPassword: "short" },
-    { confirmPassword: "different" },
-    { password: "x".repeat(73) },
-  ]) {
-    expect(
-      registerSchema.safeParse({
-        ...valid,
-        ...update,
-      }).success,
-    ).toBe(false);
-  }
-
-  expect(
-    loginSchema.safeParse({
-      email: valid.email,
-      password: "older-short",
-    }).success,
-  ).toBe(true);
-});
 
 test("sign up validates before requests and displays backend duplicate errors", async ({
   page,

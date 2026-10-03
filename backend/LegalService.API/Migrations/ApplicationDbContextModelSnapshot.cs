@@ -309,13 +309,15 @@ namespace LegalService.API.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
-                    b.Property<string>("PasswordHash")
-                        .HasColumnType("text");
-
                     b.Property<DateTime?>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<int?>("UserId")
+                        .HasColumnType("integer");
+
                     b.HasKey("ClerkId");
+
+                    b.HasIndex("UserId");
 
                     b.ToTable("Clerks");
                 });
@@ -463,7 +465,7 @@ namespace LegalService.API.Migrations
                         new
                         {
                             ServiceId = 1,
-                            CreatedAt = new DateTime(2026, 9, 29, 5, 15, 36, 175, DateTimeKind.Utc).AddTicks(5724),
+                            CreatedAt = new DateTime(2026, 10, 3, 6, 52, 51, 213, DateTimeKind.Utc).AddTicks(7280),
                             Description = "Reviewing lease/sales agreements and drafting amendments.",
                             IsActive = true,
                             Name = "Contract Review & Amendment",
@@ -472,7 +474,7 @@ namespace LegalService.API.Migrations
                         new
                         {
                             ServiceId = 2,
-                            CreatedAt = new DateTime(2026, 9, 29, 5, 15, 36, 175, DateTimeKind.Utc).AddTicks(5727),
+                            CreatedAt = new DateTime(2026, 10, 3, 6, 52, 51, 213, DateTimeKind.Utc).AddTicks(7290),
                             Description = "Drafting affidavits and arranging official notarization.",
                             IsActive = true,
                             Name = "Affidavit & Notary Services",
@@ -481,7 +483,7 @@ namespace LegalService.API.Migrations
                         new
                         {
                             ServiceId = 3,
-                            CreatedAt = new DateTime(2026, 9, 29, 5, 15, 36, 175, DateTimeKind.Utc).AddTicks(5729),
+                            CreatedAt = new DateTime(2026, 10, 3, 6, 52, 51, 213, DateTimeKind.Utc).AddTicks(7290),
                             Description = "Drafting General or Special Power of Attorney documents.",
                             IsActive = true,
                             Name = "Power of Attorney Drafting",
@@ -640,6 +642,68 @@ namespace LegalService.API.Migrations
                     b.ToTable("LawyerLegalServices");
                 });
 
+            modelBuilder.Entity("LegalService.API.Models.Entities.LawyerRecommendationWorkflow", b =>
+                {
+                    b.Property<Guid>("WorkflowId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("AppointmentId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("ApprovedLawyerId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("AuditJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<int?>("CategoryId")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("OwnerUserId")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("ParsedRequirementJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<string>("RecommendationsJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<DateOnly?>("RequestedDate")
+                        .HasColumnType("date");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("UserRequirement")
+                        .IsRequired()
+                        .HasMaxLength(4000)
+                        .HasColumnType("character varying(4000)");
+
+                    b.Property<string>("WarningsJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.HasKey("WorkflowId");
+
+                    b.HasIndex("OwnerUserId");
+
+                    b.HasIndex("Status");
+
+                    b.ToTable("LawyerRecommendationWorkflows");
+                });
+
             modelBuilder.Entity("LegalService.API.Models.Entities.LawyerSpecialization", b =>
                 {
                     b.Property<Guid>("LawyerId")
@@ -690,7 +754,7 @@ namespace LegalService.API.Migrations
                         {
                             LegalServiceId = 1,
                             Category = "Criminal Law",
-                            CreatedAt = new DateTime(2026, 9, 29, 5, 15, 36, 175, DateTimeKind.Utc).AddTicks(5691),
+                            CreatedAt = new DateTime(2026, 10, 3, 6, 52, 51, 213, DateTimeKind.Utc).AddTicks(7270),
                             Description = "Representation and case review for criminal defense cases.",
                             ServiceName = "Criminal Defense Consulting"
                         },
@@ -698,7 +762,7 @@ namespace LegalService.API.Migrations
                         {
                             LegalServiceId = 2,
                             Category = "Family Law",
-                            CreatedAt = new DateTime(2026, 9, 29, 5, 15, 36, 175, DateTimeKind.Utc).AddTicks(5695),
+                            CreatedAt = new DateTime(2026, 10, 3, 6, 52, 51, 213, DateTimeKind.Utc).AddTicks(7270),
                             Description = "Preparation and filing for divorce and child custody.",
                             ServiceName = "Divorce & Custody Filing"
                         },
@@ -706,7 +770,7 @@ namespace LegalService.API.Migrations
                         {
                             LegalServiceId = 3,
                             Category = "Corporate Law",
-                            CreatedAt = new DateTime(2026, 9, 29, 5, 15, 36, 175, DateTimeKind.Utc).AddTicks(5697),
+                            CreatedAt = new DateTime(2026, 10, 3, 6, 52, 51, 213, DateTimeKind.Utc).AddTicks(7270),
                             Description = "Incorporation filings and compliance setup.",
                             ServiceName = "Corporate Registration & Compliance"
                         });
@@ -1053,6 +1117,15 @@ namespace LegalService.API.Migrations
                         .HasForeignKey("LawyerId");
 
                     b.Navigation("LawyerAvailability");
+                });
+
+            modelBuilder.Entity("LegalService.API.Models.Entities.Clerk", b =>
+                {
+                    b.HasOne("LegalService.API.Models.Entities.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId");
+
+                    b.Navigation("User");
                 });
 
             modelBuilder.Entity("LegalService.API.Models.Entities.DocumentFile", b =>

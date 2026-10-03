@@ -1,6 +1,5 @@
 using LegalService.API.Infrastructure;
 using LegalService.API.Services.Lawyers;
-using System.Security.Claims;
 using Microsoft.EntityFrameworkCore;
 using LegalService.API.Data;
 using LegalService.API.Authentication.Services;
@@ -10,7 +9,9 @@ using LegalService.API.AgentIntegration;
 using LegalService.API.Middleware;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
+using System.Security.Claims;
 using System.Text;
+using System.Text.Json;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -29,35 +30,9 @@ builder.Services.AddDbContext<ApplicationDbContext>(options =>
 // ================================================================
 builder.Services.AddScoped<IPasswordService, PasswordService>();
 builder.Services.AddScoped<JwtService>();
-builder.Services.AddScoped<TokenService>();
-builder.Services.AddScoped<ILawyerService, LawyerService>();
-builder.Services.AddScoped<CatalogService>();
 builder.Services.AddHttpClient<ILawyerRecommendationService, RecommendationService>(c => c.Timeout = TimeSpan.FromSeconds(45));
 builder.Services.AddExceptionHandler<ApiExceptionHandler>();
 builder.Services.AddProblemDetails();
-// The member1 scheme reloads the current database role without changing the team's JWT scheme.
-builder.Services.AddAuthentication().AddJwtBearer("Member1", options =>
-{
-    options.TokenValidationParameters = new TokenValidationParameters
-    {
-        ValidateIssuer = true, ValidateAudience = true, ValidateLifetime = true, ValidateIssuerSigningKey = true,
-        ValidIssuer = builder.Configuration["Jwt:Issuer"], ValidAudience = builder.Configuration["Jwt:Audience"],
-        IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(builder.Configuration["Jwt:Key"]!)),
-        ClockSkew = TimeSpan.FromSeconds(30)
-    };
-    options.Events = new JwtBearerEvents { OnTokenValidated = async context =>
-    {
-        var db = context.HttpContext.RequestServices.GetRequiredService<ApplicationDbContext>();
-        if (!int.TryParse(context.Principal?.FindFirstValue(ClaimTypes.NameIdentifier), out var id))
-        { context.Fail("Account unavailable."); return; }
-        var user = await db.Users.AsNoTracking().SingleOrDefaultAsync(u => u.UserId == id, context.HttpContext.RequestAborted);
-        if (user is null) { context.Fail("Account unavailable."); return; }
-        var identity = (ClaimsIdentity)context.Principal!.Identity!;
-        foreach (var claim in identity.FindAll(ClaimTypes.Role).ToArray()) identity.RemoveClaim(claim);
-        identity.AddClaim(new Claim(ClaimTypes.Role, user.Role));
-    }};
-});
-builder.Services.AddAuthorization();
 
 // ================================================================
 // Documentation & Clerk Management Services
@@ -155,25 +130,72 @@ builder.Services.AddAuthentication(options =>
 
         ValidIssuer = builder.Configuration["Jwt:Issuer"],
         ValidAudience = builder.Configuration["Jwt:Audience"],
+        ClockSkew = TimeSpan.FromSeconds(30),
 
         IssuerSigningKey = new SymmetricSecurityKey(
             Encoding.UTF8.GetBytes(
                 builder.Configuration["Jwt:Key"]!
             ))
     };
+    options.Events = new JwtBearerEvents
+    {
+        OnTokenValidated = async context =>
+        {
+            if (!int.TryParse(context.Principal?.FindFirstValue(ClaimTypes.NameIdentifier), out var id))
+            {
+                context.Fail("Account unavailable.");
+                return;
+            }
+            var db = context.HttpContext.RequestServices.GetRequiredService<ApplicationDbContext>();
+            var user = await db.Users.AsNoTracking().SingleOrDefaultAsync(
+                account => account.UserId == id, context.HttpContext.RequestAborted);
+            if (user is null)
+            {
+                context.Fail("Account unavailable.");
+                return;
+            }
+            var identity = (ClaimsIdentity)context.Principal!.Identity!;
+            foreach (var claim in identity.FindAll(ClaimTypes.Role).ToArray()) identity.RemoveClaim(claim);
+            identity.AddClaim(new Claim(ClaimTypes.Role, user.Role));
+        }
+    };
 });
+builder.Services.AddAuthorization();
 
 var app = builder.Build();
+
+if (args.Contains("--seed-demo-lawyers") || args.Contains("--report-demo-lawyers") ||
+    args.Contains("--normalize-synthetic-lawyers"))
+{
+    if (!app.Environment.IsDevelopment())
+        throw new InvalidOperationException("Demo data commands may only run in Development.");
+    using var scope = app.Services.CreateScope();
+    var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+    if (args.Contains("--normalize-synthetic-lawyers"))
+    {
+        var result = await DemoLawyerSeeder.NormalizeSyntheticIdentitiesAsync(db);
+        Console.WriteLine($"Synthetic identities normalized: {result.LawyerNamesChanged} lawyer names, " +
+            $"{result.LicensesChanged} licenses, {result.AccountNamesChanged} account names.");
+    }
+    if (args.Contains("--seed-demo-lawyers"))
+    {
+        var result = await DemoLawyerSeeder.SeedAsync(db,
+            scope.ServiceProvider.GetRequiredService<IPasswordService>(),
+            DateOnly.FromDateTime(DateTime.UtcNow));
+        Console.WriteLine($"Demo seed: {result.LawyersCreated} lawyers, {result.ServicesCreated} legal services, " +
+            $"{result.AvailabilitiesCreated} availability windows, {result.SlotsCreated} slots added. " +
+            $"Customer created: {result.CustomerCreated}. Customer UUID: {result.CustomerId}");
+    }
+    Console.WriteLine(JsonSerializer.Serialize(await DemoLawyerSeeder.ReportAsync(db),
+        new JsonSerializerOptions { WriteIndented = true }));
+    return;
+}
 
 // ================================================================
 // HTTP Pipeline Configuration
 // ================================================================
 app.UseMiddleware<ExceptionMiddleware>();
-app.UseWhen(context => context.Request.Path.StartsWithSegments("/api/lawyer-management") ||
-    context.Request.Path.StartsWithSegments("/api/specializations") ||
-    context.Request.Path.StartsWithSegments("/api/legal-services") ||
-    context.Request.Path.StartsWithSegments("/api/lawyer-recommendations") ||
-    context.Request.Path.StartsWithSegments("/api/member1"), branch => branch.UseExceptionHandler());
+app.UseWhen(context => context.Request.Path.StartsWithSegments("/api/lawyer-recommendations"), branch => branch.UseExceptionHandler());
 
 if (app.Environment.IsDevelopment())
 {
@@ -198,6 +220,7 @@ app.UseAuthorization();
 
 app.MapControllers();
 
+if (!app.Configuration.GetValue<bool>("EfDesignTime"))
 using (var scope = app.Services.CreateScope())
 {
     try
@@ -215,6 +238,5 @@ using (var scope = app.Services.CreateScope())
     }
 }
 
-app.Run();
-
-public partial class Program { }
+if (!app.Configuration.GetValue<bool>("EfDesignTime"))
+    app.Run();

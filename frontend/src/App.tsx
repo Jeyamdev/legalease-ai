@@ -11,8 +11,9 @@ import { DocumentationServicesPage } from "./pages/admin/document_and_clerk/Docu
 
 import { CareersPage } from "./pages/admin/CareersPage";
 import { ClientsPage } from "./pages/admin/ClientsPage";
-import { LawyersPage } from "./pages/admin/LawyersPage";
 import { AdminServiceRequestsPage } from "./pages/admin/ServiceRequestsAdminPage";
+import { AppointmentsPage } from "./pages/admin/AppointmentsPage";
+import { lawyerLegalServicesRoutes } from "./routes/LawyerLegalServicesRoutes";
 
 import { ClerkCasesPage } from "./pages/clerk/ClerkCasesPage";
 import { LawyerDashboardPage } from "./pages/lawyer/LawyerDashboardPage";
@@ -29,15 +30,6 @@ import { CustomerLoginPage } from "./pages/customer/CustomerLoginPage";
 import { MyServiceRequestsPage } from "./pages/customer/MyServiceRequestsPage";
 import { CreateServiceRequestPage } from "./pages/customer/CreateServiceRequestPage";
 import { ServiceRequestDetailPage } from "./pages/customer/ServiceRequestDetailPage";
-
-/* Lawyer Management - Admin only */
-import { AdminLayout } from "./features/lawyers/components/Shared";
-import LawyerListPage from "./features/lawyers/pages/LawyerListPage";
-import LawyerEditorPage from "./features/lawyers/pages/LawyerEditorPage";
-import LawyerDetailPage from "./features/lawyers/pages/LawyerDetailPage";
-import RecommendationPage from "./features/lawyers/recommendations/RecommendationPage";
-import CatalogPage from "./features/lawyers/pages/CatalogPage";
-
 function App() {
   return (
     <BrowserRouter>
@@ -206,73 +198,23 @@ function App() {
             </AdminRoute>
           }
         />
-
         <Route
-          path="/admin/lawyers"
+          path="/admin/appointments"
           element={
             <AdminRoute>
-              <LawyersPage />
+              <AppointmentsPage />
             </AdminRoute>
           }
         />
-
-        {/* =========================================================
-            ADMIN LAWYER MANAGEMENT
-        ========================================================= */}
-
+        {lawyerLegalServicesRoutes}
         <Route
-          path="/admin/lawyer-management"
+          path="/lawyer/appointments"
           element={
             <AdminRoute>
-              <AdminLayout />
+              <AppointmentsPage />
             </AdminRoute>
           }
-        >
-          <Route
-            index
-            element={<LawyerListPage />}
-          />
-
-          <Route
-            path="new"
-            element={<LawyerEditorPage />}
-          />
-
-          <Route
-            path=":id"
-            element={<LawyerDetailPage />}
-          />
-
-          <Route
-            path=":id/edit"
-            element={<LawyerEditorPage />}
-          />
-
-          <Route
-            path="specializations"
-            element={
-              <CatalogPage
-                key="specializations"
-                kind="specializations"
-              />
-            }
-          />
-
-          <Route
-            path="legal-services"
-            element={
-              <CatalogPage
-                key="legal-services"
-                kind="legal-services"
-              />
-            }
-          />
-
-          <Route
-            path="recommendation-test"
-            element={<RecommendationPage />}
-          />
-        </Route>
+        />
 
         {/* =========================================================
             CUSTOMER

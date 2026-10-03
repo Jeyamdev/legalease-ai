@@ -1,315 +1,80 @@
-import { test, expect } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 
-test("admin routes require sign in", async ({ page }) => {
-  await page.goto("/admin/lawyer-management");
+const admin = { userId: 1, name: "Test Admin", email: "admin@example.test", role: "Admin" };
+const backendApi = /^https?:\/\/[^/]+\/api\//;
+const areas = [
+  { specializationId: 1, name: "Corporate & Commercial Law", description: "Commercial matters", lawyerCount: 1, legalServiceCount: 1 },
+  { specializationId: 2, name: "Tax Law", description: "Tax matters", lawyerCount: 0, legalServiceCount: 0 },
+];
+const lawyer = {
+  lawyerId: "lawyer-1", name: "Nimal Perera", email: "nimal@example.test", phoneNumber: "0700000000",
+  qualification: "Attorney-at-Law", experience: 8, licenseNumber: "ILS/LAW/0001",
+  profileDescription: "Commercial law practitioner", status: "Active", specializations: [areas[0]],
+};
+const service = {
+  legalServiceId: 7, serviceName: "Contract Review", description: "Review commercial agreements",
+  category: areas[0].name, eligibleLawyerCount: 1, legacyReferenceCount: 0,
+};
 
-  await expect(
-    page.getByRole("heading", {
-      name: "Sign in to your account",
-    }),
-  ).toBeVisible();
+test("Member 1 routes require Admin sign-in", async ({ page }) => {
+  await page.goto("/admin/lawyer-services/lawyers");
+  await expect(page).toHaveURL(/\/login$/);
 });
 
-test("create lawyer, associate catalogs, manage availability and confirm deactivation", async ({
-  page,
-}) => {
-  const id = "11111111-1111-4111-8111-111111111111";
+test("Admin keeps one module with Lawyers, Practice Areas and Legal Services", async ({ page }) => {
+  await page.addInitScript(staff => {
+    localStorage.setItem("legalease_staff_user", JSON.stringify(staff));
+    localStorage.setItem("token", "test-admin-token");
+  }, admin);
 
-  const spec = {
-    id: 2,
-    name: "Family Law",
-    description: "Divorce and custody",
-  };
+  await page.route(backendApi, async route => {
+    const url = new URL(route.request().url());
+    const path = url.pathname;
+    let body: unknown = [];
+    if (path === "/api/lawyer-services/summary") body = {
+      activeLawyers: 1, totalLawyers: 1, practiceAreas: 2, legalServices: 1, coverage: [],
+    };
+    if (path === "/api/specializations") body = areas;
+    if (path === "/api/lawyers/search") {
+      const matches = !url.searchParams.get("specialization") || url.searchParams.get("specialization") === "1";
+      const items = matches ? [lawyer] : [];
+      body = { items, page: 1, pageSize: 10, totalItems: items.length, totalPages: items.length ? 1 : 0, totalLawyers: 1 };
+    }
+    if (path === "/api/legal-services/admin") body = [service];
+    if (path === "/api/legal-services/7") body = { ...service, eligibleLawyers: [{ lawyerId: lawyer.lawyerId, name: lawyer.name }] };
+    if (path === "/api/specializations/1") body = {
+      ...areas[0], lawyers: [{ lawyerId: lawyer.lawyerId, name: lawyer.name }],
+      legalServices: [{ legalServiceId: service.legalServiceId, serviceName: service.serviceName }],
+    };
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
+  });
 
-  const service = {
-    id: 2,
-    name: "Divorce filing",
-    description: "Filing assistance",
-    category: "Family Law",
-  };
+  await page.goto("/admin/lawyer-services/lawyers");
+  await expect(page.getByRole("heading", { name: "Lawyers", exact: true })).toBeVisible();
+  await expect(page.getByText("Nimal Perera")).toBeVisible();
+  await expect(page.getByText("1 Active Lawyers").first()).toBeVisible();
+  await page.getByRole("button", { name: "Tax Law (0)" }).click();
+  await expect(page.getByText("No lawyers found")).toBeVisible();
 
-  let lawyer: Record<string, unknown> | undefined;
-  let availability: Record<string, unknown>[] = [];
-  let deactivated = false;
+  await page.getByRole("link", { name: "Practice Areas" }).click();
+  await expect(page).toHaveURL(/\/admin\/lawyer-services\/specializations$/);
+  await expect(page.getByRole("heading", { name: "Practice Area Management" })).toBeVisible();
 
-  await page.route(
-    (url) => url.pathname.startsWith("/api/"),
-    async (route) => {
-      const request = route.request();
-      const path = new URL(request.url()).pathname;
-      const method = request.method();
-
-      let body: unknown;
-
-      if (path === "/api/auth/login") {
-        body = {
-          token: "browser-test-token",
-          userId: 1,
-          name: "Admin User",
-          email: "admin@example.com",
-          role: "Admin",
-        };
-      } else if (path === "/api/specializations") {
-        body = [spec];
-      } else if (path === "/api/legal-services") {
-        body = [service];
-      } else if (path.endsWith("/availability") && method === "POST") {
-        const values = request.postDataJSON();
-
-        expect(values.startTime.slice(0, 5)).toBe("09:00");
-
-        availability = [
-          {
-            ...values,
-            startTime: "09:00:30",
-            availabilityId: id,
-            hasSlots: false,
-          },
-        ];
-
-        body = availability[0];
-      } else if (path.endsWith(`/availability/${id}`) && method === "PUT") {
-        const values = request.postDataJSON();
-
-        expect(values.startTime).toBe("09:00:30");
-
-        availability = [
-          {
-            ...values,
-            availabilityId: id,
-            hasSlots: false,
-          },
-        ];
-
-        body = availability[0];
-      } else if (path.endsWith("/availability")) {
-        body = availability;
-      } else if (path === "/api/lawyer-management/search") {
-        body = {
-          items: lawyer ? [lawyer] : [],
-          totalCount: lawyer ? 1 : 0,
-          page: 1,
-          pageSize: 20,
-        };
-      } else if (path === "/api/lawyer-management" && method === "POST") {
-        const values = request.postDataJSON();
-
-        expect(values.specializationIds).toEqual([2]);
-        expect(values.legalServiceIds).toEqual([2]);
-
-        lawyer = {
-          ...values,
-          lawyerId: id,
-          specializations: [spec],
-          legalServices: [service],
-        };
-
-        body = lawyer;
-      } else if (path === `/api/lawyer-management/${id}` && method === "DELETE") {
-        deactivated = true;
-
-        lawyer = {
-          ...lawyer,
-          status: "Inactive",
-        };
-
-        await route.fulfill({
-          status: 204,
-        });
-
-        return;
-      } else if (path === `/api/lawyer-management/${id}`) {
-        body = lawyer;
-      } else {
-        await route.fulfill({
-          status: 404,
-          json: {
-            title: "Not found",
-          },
-        });
-
-        return;
-      }
-
-      await route.fulfill({
-        json: body,
-      });
-    },
-  );
-
-  await page.goto("/login");
-
-  await page
-    .getByLabel("Email Address", {
-      exact: true,
-    })
-    .fill("admin@example.com");
-
-  await page
-    .getByLabel("Password", {
-      exact: true,
-    })
-    .fill("test-password");
-
-  await page
-    .getByRole("button", {
-      name: "Sign In",
-      exact: true,
-    })
-    .click();
-
-  await page.goto("/admin/lawyer-management");
-
-  await expect(page.getByText("No lawyers match these filters.")).toBeVisible();
-
-  await page.getByLabel("Search by name").fill("Alice");
-  await page.getByRole("button", { name: "Search", exact: true }).click();
-
-  await expect(page).toHaveURL(/search=Alice/);
-
-  // Wait until NameSearch has remounted using the Alice URL value.
-  await expect(page.getByLabel("Search by name")).toHaveValue("Alice");
-
-  await page.getByLabel("Search by name").fill("Bob");
-  await page.getByRole("button", { name: "Search", exact: true }).click();
-
-  await expect(page).toHaveURL(/search=Bob/);
-
-  // Wait for the Bob remount as well.
-  await expect(page.getByLabel("Search by name")).toHaveValue("Bob");
-
-  await page.goBack();
-
-  await expect(page).toHaveURL(/search=Alice/);
-
-  await page.getByRole("link", { name: "Add lawyer" }).click();
-  await page.getByLabel("Full name").fill("Asha Perera");
-  await page.getByLabel("Email", { exact: true }).fill("asha@example.com");
-  await page.getByLabel("Phone number").fill("+94771234567");
-  await page.getByLabel("Qualification").fill("LLB");
-  await page.getByLabel("Years of experience").fill("8");
-  await page.getByLabel("License number").fill("DEMO-LIC-1");
-  await page.getByLabel("Specializations (select multiple)").selectOption("2");
-  await page.getByLabel("Legal services (select multiple)").selectOption("2");
-  await page.getByRole("button", { name: "Save lawyer", exact: true }).click();
-
-  await expect(
-    page.getByRole("heading", {
-      name: "Asha Perera",
-    }),
-  ).toBeVisible();
-
-  await page
-    .getByLabel("Date", {
-      exact: true,
-    })
-    .fill("2030-01-01");
-
-  await page.getByLabel("Start time").fill("09:00");
-  await page.getByLabel("End time").fill("10:00");
-  await page
-    .getByRole("button", {
-      name: "Save availability",
-    })
-    .click();
-
-  await expect(page.getByText("2030-01-01 · 09:00–10:00")).toBeVisible();
-
-  await page
-    .getByRole("button", {
-      name: "Edit",
-      exact: true,
-    })
-    .click();
-
-  await expect(page.getByLabel("Start time")).toHaveValue("09:00:30");
-
-  await page
-    .getByRole("button", {
-      name: "Save availability",
-    })
-    .click();
-
-  await expect(page.getByRole("heading", { name: "Add period" })).toBeVisible();
-
-  await page
-    .getByRole("button", {
-      name: "Deactivate",
-      exact: true,
-    })
-    .click();
-
-  await page
-    .getByRole("button", {
-      name: "Cancel",
-      exact: true,
-    })
-    .click();
-
-  expect(deactivated).toBe(false);
-
-  await page
-    .getByRole("button", {
-      name: "Deactivate",
-      exact: true,
-    })
-    .click();
-
-  await page
-    .getByRole("button", {
-      name: "Confirm",
-      exact: true,
-    })
-    .click();
-
-  await expect(
-    page.getByText("Inactive", {
-      exact: true,
-    }),
-  ).toBeVisible();
-
-  expect(deactivated).toBe(true);
+  await page.getByRole("link", { name: "Legal Services", exact: true }).click();
+  await expect(page).toHaveURL(/\/admin\/lawyer-services\/legal-services$/);
+  await expect(page.getByRole("heading", { name: "Legal Service Management" })).toBeVisible();
+  await expect(page.getByText("Contract Review")).toBeVisible();
+  await expect(page.getByText("1 Lawyer")).toBeVisible();
+  await page.getByRole("button", { name: "View", exact: true }).click();
+  const details = page.getByRole("dialog", { name: "Contract Review" });
+  await expect(details.getByText("Eligible Practitioners")).toBeVisible();
+  await expect(details.getByText("Nimal Perera")).toBeVisible();
+  await expect(details.getByText("Manage Assigned Lawyers")).toHaveCount(0);
 });
 
-test("login rejects a non-admin account", async ({ page }) => {
-  await page.route(
-    "**/api/auth/login",
-    (route) =>
-      route.fulfill({
-        json: {
-          token: "customer-test-token",
-          userId: 2,
-          name: "Customer User",
-          email: "customer@example.com",
-          role: "Customer",
-        },
-      }),
-  );
-
-  await page.goto("/login");
-
-  await page
-    .getByLabel("Email Address", {
-      exact: true,
-    })
-    .fill("customer@example.com");
-
-  await page
-    .getByLabel("Password", {
-      exact: true,
-    })
-    .fill("test-password");
-
-  await page
-    .getByRole("button", {
-      name: "Sign In",
-      exact: true,
-    })
-    .click();
-
-  await expect(
-    page.getByRole("alert"),
-  ).toContainText(
-    "Access denied. You are not authorised to use this portal.",
-  );
+test("old admin lawyer URL redirects into the current module", async ({ page }) => {
+  await page.addInitScript(staff => localStorage.setItem("legalease_staff_user", JSON.stringify(staff)), admin);
+  await page.goto("/admin/lawyer-management/recommendation-test");
+  await expect(page).toHaveURL(/\/admin\/lawyer-services\/recommendations$/);
+  await expect(page.getByRole("heading", { name: "AI Lawyer Recommendation" })).toBeVisible();
 });

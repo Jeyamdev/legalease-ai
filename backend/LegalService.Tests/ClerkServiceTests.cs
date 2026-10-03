@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using LegalService.API.Data;
 using LegalService.API.DTOs.Requests;
 using LegalService.API.DTOs.Responses;
@@ -21,6 +22,7 @@ public class ClerkServiceTests
     {
         var options = new DbContextOptionsBuilder<ApplicationDbContext>()
             .UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString())
+            .ConfigureWarnings(warnings => warnings.Ignore(InMemoryEventId.TransactionIgnoredWarning))
             .Options;
         return new ApplicationDbContext(options);
     }
@@ -63,6 +65,8 @@ public class ClerkServiceTests
     {
         // Arrange
         using var context = CreateInMemoryDbContext();
+        context.Roles.Add(new Role { Id = Guid.NewGuid(), Name = "Clerk" });
+        await context.SaveChangesAsync();
         var mockDocReqService = new Mock<IDocumentationRequestService>();
         var mockPasswordService = new Mock<IPasswordService>();
         mockPasswordService.Setup(p => p.HashPassword(It.IsAny<string>())).Returns("hashed_pwd");

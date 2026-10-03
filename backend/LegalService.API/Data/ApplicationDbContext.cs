@@ -37,10 +37,24 @@ public class ApplicationDbContext : DbContext
     public DbSet<ApprovalDecision> ApprovalDecisions { get; set; }
     public DbSet<ExecutionSummary> ExecutionSummaries { get; set; }
     public DbSet<AuditLog> AuditLogs { get; set; }
+    public DbSet<LawyerRecommendationWorkflow> LawyerRecommendationWorkflows { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
+
+        modelBuilder.Entity<LawyerRecommendationWorkflow>(entity =>
+        {
+            entity.HasKey(x => x.WorkflowId);
+            entity.Property(x => x.Status).HasMaxLength(32).IsRequired();
+            entity.Property(x => x.UserRequirement).HasMaxLength(4000).IsRequired();
+            entity.Property(x => x.ParsedRequirementJson).HasColumnType("jsonb");
+            entity.Property(x => x.RecommendationsJson).HasColumnType("jsonb");
+            entity.Property(x => x.WarningsJson).HasColumnType("jsonb");
+            entity.Property(x => x.AuditJson).HasColumnType("jsonb");
+            entity.HasIndex(x => x.OwnerUserId);
+            entity.HasIndex(x => x.Status);
+        });
 
         // ==========================================
         // 1. IDENTITY AND AUTHORIZATION CONFIG

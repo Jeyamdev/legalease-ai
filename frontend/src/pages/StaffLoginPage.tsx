@@ -1,7 +1,7 @@
 import React, { useState } from "react";
+import axios from "axios";
 import { Link, useNavigate } from "react-router-dom";
 import { authApi } from "../api/authApi";
-import { useSession } from "../features/lawyers/hooks/session";
 
 export const StaffLoginPage: React.FC = () => {
   const navigate = useNavigate();
@@ -29,13 +29,11 @@ export const StaffLoginPage: React.FC = () => {
   const getDashboardPath = (role?: string) => {
     const r = role?.toLowerCase();
     if (r === "admin") return "/admin";
-    if (r === "lawyer") return "/lawyer/appointments";
+    if (r === "lawyer") return "/lawyer/dashboard";
     return "/clerk/cases";
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
-  console.log("LOGIN BUTTON CLICKED");
-
   e.preventDefault();
 
   if (!email.trim() || !password.trim()) {
@@ -49,12 +47,7 @@ export const StaffLoginPage: React.FC = () => {
 
     const res = await authApi.login(email.trim(), password);
 
-    console.log("LOGIN RESPONSE:", res);
-
-    const role = (
-      res.role ?? 
-      (res as any).Role
-    )?.toLowerCase();
+    const role = (res.role ?? (res as { Role?: string }).Role)?.toLowerCase();
 
     if (!role) {
       setError("Login successful but role information is missing.");
@@ -64,9 +57,6 @@ export const StaffLoginPage: React.FC = () => {
     switch (role) {
       case "admin":
         authApi.setCurrentAdmin(res);
-        if (res.token) {
-          useSession.getState().signIn(res.token, [res.role || "Admin"]);
-        }
         navigate("/admin");
         break;
 
@@ -86,10 +76,10 @@ export const StaffLoginPage: React.FC = () => {
         );
     }
 
-  } catch (err: any) {
+  } catch (err: unknown) {
     setError(
-      err.response?.data?.message ||
-      err.message ||
+      (axios.isAxiosError<{ message?: string }>(err) ? err.response?.data?.message : undefined) ||
+      (err instanceof Error ? err.message : undefined) ||
       "Invalid credentials. Please try again."
     );
   } finally {

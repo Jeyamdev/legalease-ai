@@ -14,8 +14,8 @@ langchain>=0.3.0
 langchain-core>=0.3.0
 langchain-google-genai>=2.0.0
 
-# --- Gemini SDK ---
-google-generativeai>=0.7.2
+# --- Official Gemini SDK (lawyer requirement understanding) ---
+google-genai>=1.0,<2
 
 # --- Data Validation ---
 pydantic>=2.7.4
@@ -44,6 +44,5 @@ rank-bm25>=0.2.2
 
 # --- Utilities ---
 python-multipart==0.0.9
-
 
 

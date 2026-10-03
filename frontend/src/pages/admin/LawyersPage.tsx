@@ -1,20 +1,42 @@
-import React, { useEffect, useState, useMemo } from "react";
-import { AdminLayout } from "../../components/layout/AdminLayout";
+import axios from "axios";
+import React, { useEffect, useState, useCallback, useRef } from "react";
+import { Plus, Search } from "lucide-react";
+import { useOutletContext } from "react-router-dom";
+import { LawyerIdentity } from "../../components/lawyers/LawyerIdentity";
+import { LawyerPagination } from "../../components/lawyers/LawyerPagination";
 import {
   lawyersApi,
   type Lawyer,
   type CreateLawyerPayload,
-  LAWYER_CATEGORIES,
+  type LawyerPageFilters,
+  type PagedLawyers,
+  type LawyerSpecialization,
+  type LawyerServicesSummary,
 } from "../../api/lawyersApi";
+import { lastLawyerPage, resetLawyerPage } from "../../components/lawyers/lawyerPageUtils";
+
+const errorMessage = (error: unknown, fallback: string) => {
+  if (!axios.isAxiosError(error)) return fallback;
+  if (error.response?.status === 401) return "Your session is no longer valid. Sign in again before saving.";
+  if (error.response?.status === 403) return "An administrator account is required to manage lawyers.";
+  if (!error.response) return "Unable to reach the backend. Check your connection and try again.";
+  return error.response.data?.message || Object.values(error.response.data?.errors ?? {}).flat().join(" ") || fallback;
+};
 
 export const LawyersPage: React.FC = () => {
-  const [lawyers, setLawyers] = useState<Lawyer[]>([]);
+  const moduleSummary = useOutletContext<LawyerServicesSummary | null>();
+  const loadVersion = useRef(0);
+  const [directory, setDirectory] = useState<PagedLawyers | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Filters
-  const [activeCategory, setActiveCategory] = useState<string>("All");
-  const [searchTerm, setSearchTerm] = useState("");
+  const [specializations, setSpecializations] = useState<LawyerSpecialization[]>([]);
+  const [catalogLoading, setCatalogLoading] = useState(true);
+  const [catalogError, setCatalogError] = useState("");
+  const [editingLawyer, setEditingLawyer] = useState<Lawyer | null>(null);
+  const [success, setSuccess] = useState("");
+  const [filters, setFilters] = useState<LawyerPageFilters>({ page: 1, pageSize: 10 });
+  const [searchInput, setSearchInput] = useState("");
 
   // Add Lawyer Modal
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
@@ -28,7 +50,7 @@ export const LawyersPage: React.FC = () => {
     experience: 5,
     licenseNumber: "",
     profileDescription: "",
-    category: LAWYER_CATEGORIES[0],
+    category: (specializations[0]?.name ?? ""),
     password: "LawyerPassword123!",
   });
 
@@ -36,50 +58,64 @@ export const LawyersPage: React.FC = () => {
   const [deletingLawyer, setDeletingLawyer] = useState<Lawyer | null>(null);
   const [deleteProcessing, setDeleteProcessing] = useState(false);
 
-  const fetchLawyers = async () => {
+  const refreshCatalog = useCallback(async () => {
+    try {
+      setSpecializations(await lawyersApi.getSpecializations());
+      setCatalogError("");
+    } catch {
+      setCatalogError("Unable to load practice categories.");
+    } finally {
+      setCatalogLoading(false);
+    }
+  }, []);
+
+  const fetchLawyers = useCallback(async () => {
+    const version = ++loadVersion.current;
+    let movingToLastPage = false;
     try {
       setLoading(true);
       setError(null);
-      const data = await lawyersApi.getLawyers();
-      setLawyers(data);
-    } catch (err: any) {
-      console.error("Failed to load lawyers", err);
-      setError(err?.response?.data?.message || "Failed to load lawyer directory.");
+      const data = await lawyersApi.getPagedLawyers(filters);
+      if (version !== loadVersion.current) return;
+      if (filters.page > lastLawyerPage(data.totalPages)) {
+        movingToLastPage = true;
+        setFilters(current => ({ ...current, page: lastLawyerPage(data.totalPages) }));
+        return;
+      }
+      setDirectory(data);
+    } catch (err: unknown) {
+      if (version !== loadVersion.current) return;
+      setError(errorMessage(err, "Unable to load lawyers."));
     } finally {
-      setLoading(false);
+      if (version === loadVersion.current && !movingToLastPage) setLoading(false);
     }
-  };
+  }, [filters]);
 
   useEffect(() => {
-    fetchLawyers();
-  }, []);
+    void Promise.resolve().then(fetchLawyers);
+  }, [fetchLawyers]);
 
-  const filteredLawyers = useMemo(() => {
-    return lawyers.filter((l) => {
-      // Category filter
-      if (activeCategory !== "All") {
-        const matchesCategory = l.specializations.some(
-          (s) => s.name.toLowerCase() === activeCategory.toLowerCase()
-        );
-        if (!matchesCategory) return false;
-      }
+  useEffect(() => { void Promise.resolve().then(refreshCatalog); }, [refreshCatalog]);
 
-      // Search term filter
-      if (searchTerm.trim()) {
-        const term = searchTerm.toLowerCase();
-        const matchesName = l.name.toLowerCase().includes(term);
-        const matchesEmail = (l.email || "").toLowerCase().includes(term);
-        const matchesQual = (l.qualification || "").toLowerCase().includes(term);
-        const matchesLicense = (l.licenseNumber || "").toLowerCase().includes(term);
-        const matchesSpec = l.specializations.some((s) => s.name.toLowerCase().includes(term));
-        if (!matchesName && !matchesEmail && !matchesQual && !matchesLicense && !matchesSpec) {
-          return false;
-        }
-      }
+  useEffect(() => {
+    const timeout = window.setTimeout(() => {
+      const search = searchInput.trim();
+      setFilters(current => (current.search ?? "") === search ? current : resetLawyerPage(current, { search: search || undefined }));
+    }, 350);
+    return () => window.clearTimeout(timeout);
+  }, [searchInput]);
 
-      return true;
-    });
-  }, [lawyers, activeCategory, searchTerm]);
+  const changeFilters = (changes: Partial<LawyerPageFilters>) => {
+    setFilters(current => resetLawyerPage(current, { ...changes, search: searchInput.trim() || undefined }));
+  };
+
+  const openAddModal = (category = specializations[0]?.name ?? "") => {
+    setFormError(null);
+    setEditingLawyer(null);
+    setFormData({ name: "", email: "", phoneNumber: "", qualification: "", experience: 0,
+      licenseNumber: "", profileDescription: "", category, password: "" });
+    setIsAddModalOpen(true);
+  };
 
   const handleAddSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -100,10 +136,16 @@ export const LawyersPage: React.FC = () => {
 
     try {
       setSubmitting(true);
-      await lawyersApi.createLawyer({
-        ...formData,
-        experience: Number(formData.experience) || 0,
-      });
+      const payload = { ...formData, experience: Number(formData.experience),
+        specializationId: specializations.find(s => s.name === formData.category)?.specializationId };
+      if (editingLawyer) {
+        const update = { name: payload.name, email: payload.email, phoneNumber: payload.phoneNumber,
+          qualification: payload.qualification, experience: payload.experience, licenseNumber: payload.licenseNumber,
+          profileDescription: payload.profileDescription, category: payload.category, specializationId: payload.specializationId };
+        await lawyersApi.updateLawyer(editingLawyer.lawyerId, update);
+      } else await lawyersApi.createLawyer(payload);
+      setSuccess(editingLawyer ? "Lawyer updated successfully." : "Lawyer created successfully.");
+      setEditingLawyer(null);
 
       setIsAddModalOpen(false);
       setFormData({
@@ -114,14 +156,13 @@ export const LawyersPage: React.FC = () => {
         experience: 5,
         licenseNumber: "",
         profileDescription: "",
-        category: LAWYER_CATEGORIES[0],
+        category: (specializations[0]?.name ?? ""),
         password: "LawyerPassword123!",
       });
 
-      await fetchLawyers();
-    } catch (err: any) {
-      console.error("Create lawyer failed", err);
-      setFormError(err?.response?.data?.message || "Failed to create lawyer account.");
+      await Promise.all([fetchLawyers(), refreshCatalog()]);
+    } catch (err: unknown) {
+      setFormError(errorMessage(err, "Failed to save lawyer."));
     } finally {
       setSubmitting(false);
     }
@@ -133,159 +174,105 @@ export const LawyersPage: React.FC = () => {
       setDeleteProcessing(true);
       await lawyersApi.deleteLawyer(deletingLawyer.lawyerId);
       setDeletingLawyer(null);
-      await fetchLawyers();
-    } catch (err: any) {
-      alert(err?.response?.data?.message || "Failed to delete lawyer.");
+      setSuccess("Lawyer deleted successfully.");
+      await Promise.all([fetchLawyers(), refreshCatalog()]);
+    } catch (err: unknown) {
+      alert(errorMessage(err, "Failed to delete lawyer."));
     } finally {
       setDeleteProcessing(false);
     }
   };
 
   return (
-    <AdminLayout
-      title="Lawyer Management"
-      subtitle="Register, assign legal categories, and manage certified counsel across practice areas"
-    >
-      {/* Category Pills & Actions Header */}
-      <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5 mb-6">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div>
-            <h2 className="text-lg font-bold text-slate-900">Legal Practice Categories</h2>
-            <p className="text-xs text-slate-500 mt-0.5">
-              Each attorney is designated to exactly one primary legal practice category
-            </p>
-          </div>
-          <button
-            onClick={() => {
-              setFormError(null);
-              setIsAddModalOpen(true);
-            }}
-            className="inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-sm rounded-lg shadow-sm transition-colors cursor-pointer"
-          >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M12 4v16m8-8H4" />
-            </svg>
-            Add New Lawyer
-          </button>
+    <>
+      {success && <p role="status" className="mb-4 rounded-lg bg-green-50 p-3 text-green-800">{success}</p>}
+      <div className="mb-5 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <h2 className="text-xl font-bold text-slate-900">Lawyers</h2>
+          <p className="mt-1 text-sm text-slate-500">Manage registered legal practitioners, profiles and availability</p>
+          <p className="mt-2 text-xs font-semibold text-slate-600">
+            {moduleSummary?.activeLawyers ?? "..."} Active Lawyers
+            <span className="mx-2 text-slate-300" aria-hidden="true">·</span>
+            {moduleSummary?.totalLawyers ?? directory?.totalLawyers ?? "..."} Total Records
+            <span className="mx-2 text-slate-300" aria-hidden="true">·</span>
+            {catalogLoading || catalogError ? "..." : specializations.length} Practice Areas
+          </p>
         </div>
-
-        {/* Practice Categories Tabs */}
-        <div className="flex flex-wrap gap-2 mt-5 pt-4 border-t border-slate-100">
-          <button
-            onClick={() => setActiveCategory("All")}
-            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
-              activeCategory === "All"
-                ? "bg-slate-900 text-white shadow"
-                : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-            }`}
-          >
-            All Categories ({lawyers.length})
-          </button>
-          {LAWYER_CATEGORIES.map((cat) => {
-            const count = lawyers.filter((l) =>
-              l.specializations.some((s) => s.name.toLowerCase() === cat.toLowerCase())
-            ).length;
-            return (
-              <button
-                key={cat}
-                onClick={() => setActiveCategory(cat)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
-                  activeCategory === cat
-                    ? "bg-amber-500 text-slate-950 shadow"
-                    : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-                }`}
-              >
-                {cat} ({count})
-              </button>
-            );
-          })}
-        </div>
-
-        {/* Search bar */}
-        <div className="mt-4">
-          <div className="relative">
-            <input
-              type="text"
-              placeholder="Search lawyers by name, license number, qualifications..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full pl-10 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-amber-500 focus:bg-white transition-all"
-            />
-            <svg
-              className="w-4 h-4 text-slate-400 absolute left-3.5 top-3"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-            </svg>
-            {searchTerm && (
-              <button
-                onClick={() => setSearchTerm("")}
-                className="absolute right-3 top-2.5 text-xs text-slate-400 hover:text-slate-600"
-              >
-                Clear
-              </button>
-            )}
-          </div>
-        </div>
+        <button type="button" onClick={() => openAddModal()} disabled={!specializations.length}
+          className="inline-flex shrink-0 items-center justify-center gap-2 rounded-lg bg-amber-500 px-4 py-2.5 text-sm font-bold text-slate-950 shadow-sm transition-colors hover:bg-amber-600 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-600 disabled:opacity-50">
+          <Plus size={16} aria-hidden="true" />Add New Lawyer
+        </button>
       </div>
 
-      {/* Directory Content */}
-      {loading ? (
-        <div className="flex flex-col items-center justify-center p-12 bg-white rounded-xl border border-slate-200 shadow-sm">
-          <div className="w-8 h-8 border-3 border-amber-500 border-t-transparent rounded-full animate-spin"></div>
-          <p className="text-sm text-slate-500 mt-3 font-medium">Loading lawyer directory...</p>
-        </div>
-      ) : error ? (
-        <div className="p-6 bg-red-50 border border-red-200 rounded-xl text-red-700 text-sm flex items-center justify-between">
-          <div>{error}</div>
-          <button
-            onClick={fetchLawyers}
-            className="px-3 py-1.5 bg-red-600 text-white rounded text-xs font-semibold hover:bg-red-700"
-          >
-            Retry
+      <section aria-label="Lawyer filters" className="mb-5 rounded-lg border border-slate-200 bg-white p-4 sm:p-5">
+        <h3 className="text-sm font-bold text-slate-800">Practice Areas</h3>
+        {catalogError && <p role="alert" className="mt-2 text-xs text-red-700">{catalogError} <button type="button" onClick={() => void refreshCatalog()} className="underline">Retry</button></p>}
+        <div className="mt-3 flex flex-wrap gap-2">
+          <button type="button" aria-pressed={!filters.specialization} onClick={() => changeFilters({ specialization: undefined })}
+            className={`rounded-md px-3 py-1.5 text-xs font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-600 ${!filters.specialization ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"}`}>
+            All Practice Areas ({error ? "..." : directory?.totalLawyers ?? "..."})
           </button>
+          {specializations.map(category => (
+            <button key={category.specializationId} type="button" aria-pressed={filters.specialization === String(category.specializationId)}
+              onClick={() => changeFilters({ specialization: String(category.specializationId) })}
+              className={`rounded-md px-3 py-1.5 text-xs font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-600 ${filters.specialization === String(category.specializationId) ? "bg-amber-500 text-slate-950" : category.lawyerCount === 0 ? "bg-slate-100 text-slate-400 hover:bg-slate-200" : "bg-slate-100 text-slate-600 hover:bg-slate-200"}`}>
+              {category.name} ({category.lawyerCount ?? "..."})
+            </button>
+          ))}
         </div>
-      ) : filteredLawyers.length === 0 ? (
-        <div className="bg-white rounded-xl border border-slate-200 p-12 text-center shadow-sm">
-          <div className="w-12 h-12 rounded-full bg-amber-50 text-amber-600 mx-auto flex items-center justify-center text-xl font-bold mb-3">
-            ⚖
-          </div>
-          <h3 className="text-base font-bold text-slate-800">No lawyers found</h3>
-          <p className="text-xs text-slate-500 mt-1 max-w-sm mx-auto">
-            {searchTerm
-              ? `No lawyers match "${searchTerm}" in category "${activeCategory}".`
-              : `There are currently no lawyers assigned to "${activeCategory}".`}
-          </p>
-          <button
-            onClick={() => {
-              setFormData((prev) => ({
-                ...prev,
-                category: activeCategory !== "All" ? activeCategory : LAWYER_CATEGORIES[0],
-              }));
-              setIsAddModalOpen(true);
-            }}
-            className="mt-4 px-4 py-2 bg-slate-900 text-white hover:bg-slate-800 text-xs font-semibold rounded-lg transition-colors cursor-pointer"
-          >
-            + Add Lawyer to {activeCategory !== "All" ? activeCategory : "System"}
-          </button>
+
+        <div className="mt-4 grid gap-3 border-t border-slate-100 pt-4 md:grid-cols-[minmax(0,1fr)_auto] md:items-end">
+          <label className="block min-w-0">
+            <span className="sr-only">Search lawyers</span>
+            <span className="relative block">
+              <Search size={17} aria-hidden="true" className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input type="search" value={searchInput} onChange={e => setSearchInput(e.target.value)}
+                placeholder="Search lawyers by name, license number, qualifications..."
+                className="w-full rounded-md border border-slate-300 bg-slate-50 py-2 pl-10 pr-3 text-sm text-slate-900 focus:border-amber-500 focus:bg-white focus:outline-none" />
+            </span>
+          </label>
+          <label className="flex items-center justify-between gap-3 text-sm font-medium text-slate-600 md:justify-start">
+            Available on
+            <input type="date" value={filters.date ?? ""} onChange={e => changeFilters({ date: e.target.value || undefined })}
+              className="min-w-0 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-amber-500 focus:outline-none" />
+          </label>
         </div>
-      ) : (
-        <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+      </section>
+
+      {error && <div role="alert" className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+        <span>{error}</span>
+        <button type="button" onClick={() => void fetchLawyers()} className="rounded-md border border-red-300 px-3 py-1.5 font-semibold hover:bg-red-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-600">Retry</button>
+      </div>}
+      {loading && !directory ? (
+        <div role="status" className="flex min-h-48 items-center justify-center gap-3 rounded-lg border border-slate-200 bg-white text-sm text-slate-500">
+          <span className="h-5 w-5 animate-spin rounded-full border-2 border-amber-500 border-t-transparent" aria-hidden="true" />Loading lawyer directory...
+        </div>
+      ) : error ? null : directory && directory.items.length === 0 ? (
+        <div className="rounded-lg border border-slate-200 bg-white px-6 py-12 text-center">
+          {loading ? <p role="status" className="text-sm text-slate-500">Updating lawyer directory...</p> : <>
+            <h3 className="text-base font-bold text-slate-800">No lawyers found</h3>
+            <p className="mt-1 text-sm text-slate-500">
+              {directory.totalLawyers === 0 ? "No lawyers have been registered yet." : "Try changing the search, Practice Area or availability date."}
+            </p>
+            {directory.totalLawyers === 0 && specializations.length > 0 && <button type="button" onClick={() => openAddModal()} className="mt-4 rounded-md bg-amber-500 px-4 py-2 text-sm font-bold text-slate-950 hover:bg-amber-600">Add New Lawyer</button>}
+          </>}
+        </div>
+      ) : directory ? (
+        <div aria-busy={loading} className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
+          {loading && <p role="status" className="border-b border-slate-100 px-4 py-2 text-xs text-slate-500">Updating lawyer directory...</p>}
           <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm text-slate-700">
+            <table className="w-full min-w-[760px] text-left text-sm text-slate-700">
               <thead className="bg-slate-50 text-slate-500 font-semibold text-xs border-b border-slate-200 uppercase tracking-wider">
                 <tr>
                   <th className="py-3.5 px-4">Counsel Details</th>
-                  <th className="py-3.5 px-4">Designated Category</th>
+                  <th className="py-3.5 px-4">Practice Area</th>
                   <th className="py-3.5 px-4">Experience & Bar #</th>
                   <th className="py-3.5 px-4">Contact Info</th>
                   <th className="py-3.5 px-4 text-right">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {filteredLawyers.map((lawyer) => {
+                {directory.items.map((lawyer) => {
                   const categoryName =
                     lawyer.specializations.length > 0
                       ? lawyer.specializations[0].name
@@ -299,8 +286,7 @@ export const LawyersPage: React.FC = () => {
                             {lawyer.name.trim() ? lawyer.name.trim()[0] : "L"}
                           </div>
                           <div>
-                            <div className="font-bold text-slate-900">{lawyer.name}</div>
-                            <div className="text-xs text-slate-500">{lawyer.qualification}</div>
+                            <LawyerIdentity lawyer={lawyer} />
                           </div>
                         </div>
                       </td>
@@ -318,13 +304,18 @@ export const LawyersPage: React.FC = () => {
                         </div>
                       </td>
                       <td className="py-3.5 px-4">
-                        <div className="text-xs text-slate-800 font-medium">{lawyer.email}</div>
+                        <div className="text-xs text-slate-800 font-medium">{lawyer.email || "No email"}</div>
                         <div className="text-xs text-slate-500">{lawyer.phoneNumber || "No phone"}</div>
                       </td>
                       <td className="py-3.5 px-4 text-right">
+                        <button onClick={() => {
+                          setEditingLawyer(lawyer); setFormError(null);
+                          setFormData({ ...lawyer, category: lawyer.specializations[0]?.name ?? "", password: undefined });
+                          setIsAddModalOpen(true);
+                        }} className="rounded px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-amber-600">Edit</button>
                         <button
                           onClick={() => setDeletingLawyer(lawyer)}
-                          className="px-2.5 py-1 text-xs font-semibold text-red-600 hover:text-red-800 hover:bg-red-50 rounded transition-colors cursor-pointer"
+                          className="rounded px-2.5 py-1 text-xs font-semibold text-slate-500 transition-colors hover:bg-red-50 hover:text-red-700 focus-visible:outline-2 focus-visible:outline-red-600"
                         >
                           Delete
                         </button>
@@ -335,12 +326,12 @@ export const LawyersPage: React.FC = () => {
               </tbody>
             </table>
           </div>
-          <div className="px-4 py-3 bg-slate-50 border-t border-slate-200 text-xs text-slate-500 flex justify-between items-center">
-            <span>Showing {filteredLawyers.length} of {lawyers.length} registered lawyers</span>
-            <span className="font-semibold text-slate-700">Practice Area Distribution: 5 Authorized Categories</span>
-          </div>
+          <LawyerPagination page={directory.page} pageSize={directory.pageSize} totalItems={directory.totalItems}
+            totalPages={directory.totalPages} loading={loading}
+            onPageChange={page => setFilters(current => ({ ...current, page }))}
+            onPageSizeChange={pageSize => changeFilters({ pageSize })} />
         </div>
-      )}
+      ) : null}
 
       {/* Add Lawyer Modal */}
       {isAddModalOpen && (
@@ -348,12 +339,13 @@ export const LawyersPage: React.FC = () => {
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
             <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between bg-slate-50">
               <div>
-                <h3 className="text-base font-bold text-slate-900">Add New Legal Counsel</h3>
+                <h3 className="text-base font-bold text-slate-900">{editingLawyer ? "Edit Legal Counsel" : "Add New Legal Counsel"}</h3>
                 <p className="text-xs text-slate-500 mt-0.5">
-                  Assign practitioner to one legal category and create their portal credentials
+                  {editingLawyer ? "Update profile and login email; account permissions and password stay unchanged." : "Assign practitioner to one Practice Area and create their portal credentials"}
                 </p>
               </div>
               <button
+                disabled={submitting}
                 onClick={() => setIsAddModalOpen(false)}
                 className="text-slate-400 hover:text-slate-600 p-1 rounded-lg"
               >
@@ -413,21 +405,23 @@ export const LawyersPage: React.FC = () => {
               {/* LAWYER CATEGORY (STRICT SINGLE SELECTION) */}
               <div>
                 <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                  Authorized Practice Category (One Category) *
+                  Authorized Practice Area (One Area) *
                 </label>
                 <select
+                  required
                   value={formData.category}
                   onChange={(e) => setFormData({ ...formData, category: e.target.value })}
                   className="w-full px-3 py-2.5 border-2 border-amber-300 bg-amber-50/40 rounded-lg text-sm font-semibold text-slate-900 focus:ring-2 focus:ring-amber-500 focus:outline-none"
                 >
-                  {LAWYER_CATEGORIES.map((cat) => (
+                  <option value="" disabled>Select Practice Area</option>
+                  {specializations.map(s => s.name).map((cat) => (
                     <option key={cat} value={cat}>
                       {cat}
                     </option>
                   ))}
                 </select>
                 <p className="text-[11px] text-slate-500 mt-1">
-                  Lawyer will be listed under this specialization for client searches & consultations.
+                  Lawyer will be listed under this Practice Area for client searches and consultations.
                 </p>
               </div>
 
@@ -473,17 +467,18 @@ export const LawyersPage: React.FC = () => {
                     className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-mono focus:ring-2 focus:ring-amber-500 focus:outline-none"
                   />
                 </div>
-                <div>
+                {!editingLawyer && <div>
                   <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
                     Initial Portal Password
                   </label>
                   <input
-                    type="text"
-                    value={formData.password}
+                    type="password"
+                    autoComplete="new-password"
+                    value={formData.password ?? ""}
                     onChange={(e) => setFormData({ ...formData, password: e.target.value })}
                     className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-amber-500 focus:outline-none font-mono"
                   />
-                </div>
+                </div>}
               </div>
 
               <div>
@@ -502,7 +497,8 @@ export const LawyersPage: React.FC = () => {
               <div className="pt-3 border-t border-slate-200 flex justify-end gap-3">
                 <button
                   type="button"
-                  onClick={() => setIsAddModalOpen(false)}
+                  disabled={submitting}
+                onClick={() => setIsAddModalOpen(false)}
                   className="px-4 py-2 border border-slate-300 text-slate-700 font-semibold text-xs rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
                 >
                   Cancel
@@ -512,7 +508,7 @@ export const LawyersPage: React.FC = () => {
                   disabled={submitting}
                   className="px-5 py-2 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs rounded-lg shadow-sm transition-colors cursor-pointer disabled:opacity-50"
                 >
-                  {submitting ? "Registering..." : "Confirm & Add Lawyer"}
+                  {submitting ? "Saving..." : editingLawyer ? "Save Changes" : "Confirm & Add Lawyer"}
                 </button>
               </div>
             </form>
@@ -527,7 +523,7 @@ export const LawyersPage: React.FC = () => {
             <h3 className="text-base font-bold text-slate-900">Remove Legal Counsel</h3>
             <p className="text-xs text-slate-600 mt-2">
               Are you sure you want to remove <strong>{deletingLawyer.name}</strong> from the system?
-              Their login and designated category ({deletingLawyer.specializations[0]?.name || "Counsel"}) will be unlinked.
+              Their directory profile and Practice Area assignment will be removed. Existing accounts are retained; lawyers with appointment history cannot be deleted.
             </p>
             <div className="mt-6 flex justify-end gap-3">
               <button
@@ -549,6 +545,6 @@ export const LawyersPage: React.FC = () => {
           </div>
         </div>
       )}
-    </AdminLayout>
+    </>
   );
 };

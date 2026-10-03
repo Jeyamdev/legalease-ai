@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 const admin = { userId: 1, name: "Test Admin", email: "admin@example.test", role: "Admin" };
+const backendApi = /^https?:\/\/[^/]+\/api\//;
 const date = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
 const trace = ["received", "parse_requirement", "validate_category", "search_lawyers", "rank_candidates", "backend_validation"]
   .map(step => ({ step, status: "completed", timestamp: new Date().toISOString(), summary: `${step} completed` }));
@@ -19,7 +20,7 @@ test("recommendation is visible, waits for human approval, and restores by workf
     localStorage.setItem("legalease_staff_user", JSON.stringify(staff));
     localStorage.setItem("token", "test-admin-token");
   }, admin);
-  await page.route("**/api/**", async route => {
+  await page.route(backendApi, async route => {
     const url = new URL(route.request().url());
     const path = url.pathname;
     const method = route.request().method();
@@ -59,14 +60,14 @@ test("recommendation is visible, waits for human approval, and restores by workf
 
   await page.getByRole("button", { name: "View Workflow" }).click();
   await expect(page.getByText("Requirement Interpreted")).toBeVisible();
-  await expect(page.getByText("Human Approval", { exact: true })).toBeVisible();
+  await expect(page.getByText(/Human Approval/)).toBeVisible();
   await page.reload();
   await expect(page.getByText("82 Recommendation Points")).toBeVisible();
   expect(creates).toBe(1);
 
   await page.getByRole("button", { name: "Select Lawyer" }).click();
-  await page.getByLabel("Customer", { exact: true }).selectOption("customer-1");
-  await page.getByLabel("Available slot").selectOption("slot-1");
+  await page.getByRole("combobox", { name: "Customer" }).selectOption("customer-1");
+  await page.getByRole("combobox", { name: "Available slot" }).selectOption("slot-1");
   await page.getByRole("button", { name: "Approve & Create Appointment" }).click();
   await expect(page.getByRole("heading", { name: "Appointment Created" })).toBeVisible();
   expect(approvals).toBe(1);

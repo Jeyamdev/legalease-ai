@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 const admin = { userId: 1, name: "Test Admin", email: "admin@example.test", role: "Admin" };
+const backendApi = /^https?:\/\/[^/]+\/api\//;
 const areas = [
   { specializationId: 1, name: "Corporate & Commercial Law", description: "Commercial matters", lawyerCount: 1, legalServiceCount: 1 },
   { specializationId: 2, name: "Tax Law", description: "Tax matters", lawyerCount: 0, legalServiceCount: 0 },
@@ -26,7 +27,7 @@ test("Admin keeps one module with Lawyers, Practice Areas and Legal Services", a
     localStorage.setItem("token", "test-admin-token");
   }, admin);
 
-  await page.route("**/api/**", async route => {
+  await page.route(backendApi, async route => {
     const url = new URL(route.request().url());
     const path = url.pathname;
     let body: unknown = [];
@@ -59,7 +60,7 @@ test("Admin keeps one module with Lawyers, Practice Areas and Legal Services", a
   await expect(page).toHaveURL(/\/admin\/lawyer-services\/specializations$/);
   await expect(page.getByRole("heading", { name: "Practice Area Management" })).toBeVisible();
 
-  await page.getByRole("link", { name: "Legal Services" }).click();
+  await page.getByRole("link", { name: "Legal Services", exact: true }).click();
   await expect(page).toHaveURL(/\/admin\/lawyer-services\/legal-services$/);
   await expect(page.getByRole("heading", { name: "Legal Service Management" })).toBeVisible();
   await expect(page.getByText("Contract Review")).toBeVisible();

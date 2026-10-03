@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "test": "playwright test",
     "test:member1": "node --test tests/member1-routes.test.mjs",
     "test:e2e": "playwright test",
     "lint": "eslint .",

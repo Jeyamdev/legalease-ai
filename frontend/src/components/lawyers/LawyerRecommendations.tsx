@@ -52,12 +52,13 @@ export function LawyerRecommendations() {
 
   useEffect(() => () => pending.current?.abort(), []);
   useEffect(() => {
-    if (!workflowId || loadedWorkflow.current === workflowId) return;
-    loadedWorkflow.current = workflowId;
+    if (!workflowId) return;
+    if (loadedWorkflow.current === workflowId && result?.workflowId === workflowId) return;
     let active = true;
     setRestoring(true);
     recommendationsApi.get(workflowId).then(data => {
       if (!active) return;
+      loadedWorkflow.current = workflowId;
       setResult(data);
       setRequirement(data.userRequirement || data.parsedRequirement?.requirement || "");
       setDate(data.date || "");
@@ -67,7 +68,7 @@ export function LawyerRecommendations() {
     }).catch(error => { if (active) setError(requestError(error, "Workflow not found or unavailable.")); })
       .finally(() => { if (active) setRestoring(false); });
     return () => { active = false; };
-  }, [workflowId]);
+  }, [workflowId, result?.workflowId]);
 
   useEffect(() => {
     if (!selectedLawyer || result?.status !== "AWAITING_APPROVAL") return;

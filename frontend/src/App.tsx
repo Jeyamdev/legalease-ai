@@ -1,42 +1,100 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import LandingPage from "./pages/LandingPage";
+
 import { StaffLoginPage } from "./pages/StaffLoginPage";
+import { SignupPage } from "./pages/admin/SignupPage";
+
 import { DocumentationRequestsPage } from "./pages/admin/document_and_clerk/DocumentationRequestsPage";
 import { DocumentationRequestDetailPage } from "./pages/admin/document_and_clerk/DocumentationRequestDetailPage";
 import { ClerksPage } from "./pages/admin/document_and_clerk/ClerksPage";
 import { DocumentationServicesPage } from "./pages/admin/document_and_clerk/DocumentationServicesPage";
+
 import { CareersPage } from "./pages/admin/CareersPage";
 import { ClientsPage } from "./pages/admin/ClientsPage";
+import { AdminServiceRequestsPage } from "./pages/admin/ServiceRequestsAdminPage";
+import { AppointmentsPage } from "./pages/admin/AppointmentsPage";
+import { lawyerLegalServicesRoutes } from "./routes/LawyerLegalServicesRoutes";
+
 import { ClerkCasesPage } from "./pages/clerk/ClerkCasesPage";
+import { LawyerDashboardPage } from "./pages/lawyer/LawyerDashboardPage";
+
 import { CareersPublicPage } from "./pages/public/CareersPublicPage";
-import { AdminRoute, ClerkRoute } from "./routes/ProtectedRoutes";
-// ── Customer Service Requests (Member 4) ──
+
+import {
+  AdminRoute,
+  ClerkRoute,
+  LawyerRoute,
+} from "./routes/ProtectedRoutes";
+
 import { CustomerLoginPage } from "./pages/customer/CustomerLoginPage";
 import { MyServiceRequestsPage } from "./pages/customer/MyServiceRequestsPage";
 import { CreateServiceRequestPage } from "./pages/customer/CreateServiceRequestPage";
 import { ServiceRequestDetailPage } from "./pages/customer/ServiceRequestDetailPage";
-import { AdminServiceRequestsPage } from "./pages/admin/ServiceRequestsAdminPage";
-// ── Member 2: Appointments & Booking Management ──
-import { AppointmentsPage } from "./pages/admin/AppointmentsPage";
-import { lawyerLegalServicesRoutes } from "./routes/LawyerLegalServicesRoutes";
-
-
 function App() {
   return (
     <BrowserRouter>
       <Routes>
-        {/* Public */}
+        {/* =========================================================
+            PUBLIC
+        ========================================================= */}
+
         <Route path="/" element={<LandingPage />} />
-        <Route path="/careers" element={<CareersPublicPage />} />
-        <Route path="/jobs" element={<CareersPublicPage />} />
 
-        {/* Login — single entry point */}
-        <Route path="/login" element={<StaffLoginPage />} />
-        <Route path="/staff/login" element={<Navigate to="/login" replace />} />
-        <Route path="/clerk/login" element={<Navigate to="/login" replace />} />
+        <Route
+          path="/careers"
+          element={<CareersPublicPage />}
+        />
 
-        {/* ── Clerk routes (clerk only) ─────────────────────────── */}
-        <Route path="/clerk" element={<Navigate to="/clerk/cases" replace />} />
+        <Route
+          path="/jobs"
+          element={<CareersPublicPage />}
+        />
+
+        {/* =========================================================
+            STAFF AUTHENTICATION
+            Admin / Clerk / Lawyer all use the same login
+        ========================================================= */}
+
+        <Route
+          path="/login"
+          element={<StaffLoginPage />}
+        />
+
+        <Route
+          path="/signup"
+          element={<SignupPage />}
+        />
+
+        {/* Old staff login URLs */}
+        <Route
+          path="/staff/login"
+          element={<Navigate to="/login" replace />}
+        />
+
+        <Route
+          path="/clerk/login"
+          element={<Navigate to="/login" replace />}
+        />
+
+        <Route
+          path="/member1/login"
+          element={<Navigate to="/login" replace />}
+        />
+
+        <Route
+          path="/admin/login"
+          element={<Navigate to="/login" replace />}
+        />
+
+        {/* =========================================================
+            CLERK PORTAL
+        ========================================================= */}
+
+        <Route
+          path="/clerk"
+          element={<Navigate to="/clerk/cases" replace />}
+        />
+
         <Route
           path="/clerk/cases"
           element={
@@ -46,11 +104,38 @@ function App() {
           }
         />
 
-        {/* ── Admin routes (admin only) ─────────────────────────── */}
+        {/* =========================================================
+            LAWYER PORTAL
+        ========================================================= */}
+
+        <Route
+          path="/lawyer"
+          element={<Navigate to="/lawyer/dashboard" replace />}
+        />
+
+        <Route
+          path="/lawyer/dashboard"
+          element={
+            <LawyerRoute>
+              <LawyerDashboardPage />
+            </LawyerRoute>
+          }
+        />
+
+        {/* =========================================================
+            ADMIN PORTAL
+        ========================================================= */}
+
         <Route
           path="/admin"
-          element={<Navigate to="/admin/documentation-requests" replace />}
+          element={
+            <Navigate
+              to="/admin/documentation-requests"
+              replace
+            />
+          }
         />
+
         <Route
           path="/admin/documentation-requests"
           element={
@@ -59,6 +144,7 @@ function App() {
             </AdminRoute>
           }
         />
+
         <Route
           path="/admin/documentation-requests/:id"
           element={
@@ -67,6 +153,7 @@ function App() {
             </AdminRoute>
           }
         />
+
         <Route
           path="/admin/clerks"
           element={
@@ -75,6 +162,7 @@ function App() {
             </AdminRoute>
           }
         />
+
         <Route
           path="/admin/clients"
           element={
@@ -83,6 +171,7 @@ function App() {
             </AdminRoute>
           }
         />
+
         <Route
           path="/admin/documentation-services"
           element={
@@ -91,6 +180,7 @@ function App() {
             </AdminRoute>
           }
         />
+
         <Route
           path="/admin/careers"
           element={
@@ -99,7 +189,7 @@ function App() {
             </AdminRoute>
           }
         />
-        {/* ── Admin: Customer Service Requests (Member 4) ──────────── */}
+
         <Route
           path="/admin/service-requests"
           element={
@@ -108,7 +198,6 @@ function App() {
             </AdminRoute>
           }
         />
-        {/* ── Member 2: Appointments & Booking Management ───────────── */}
         <Route
           path="/admin/appointments"
           element={
@@ -127,14 +216,38 @@ function App() {
           }
         />
 
-        {/* ── Customer Portal (Member 4) ───────────────────────────── */}
-        <Route path="/customer/login" element={<CustomerLoginPage />} />
-        <Route path="/my-requests" element={<MyServiceRequestsPage />} />
-        <Route path="/my-requests/new" element={<CreateServiceRequestPage />} />
-        <Route path="/my-requests/:id" element={<ServiceRequestDetailPage />} />
+        {/* =========================================================
+            CUSTOMER
+        ========================================================= */}
 
-        {/* Catch-all */}
-        <Route path="*" element={<Navigate to="/" replace />} />
+        <Route
+          path="/customer/login"
+          element={<CustomerLoginPage />}
+        />
+
+        <Route
+          path="/my-requests"
+          element={<MyServiceRequestsPage />}
+        />
+
+        <Route
+          path="/my-requests/new"
+          element={<CreateServiceRequestPage />}
+        />
+
+        <Route
+          path="/my-requests/:id"
+          element={<ServiceRequestDetailPage />}
+        />
+
+        {/* =========================================================
+            CATCH ALL
+        ========================================================= */}
+
+        <Route
+          path="*"
+          element={<Navigate to="/" replace />}
+        />
       </Routes>
     </BrowserRouter>
   );

@@ -1,13 +1,22 @@
+import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'config/api_config.dart';
 import 'package:flutter/material.dart';
 import 'auth/auth.dart';
-import 'config/api_config.dart';
 import 'config/app_theme.dart';
 import 'screens/main_navigation_screen.dart';
 
-void main() async {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Load environment variables
+  await dotenv.load(fileName: ".env");
+
+  // Initialize API configuration
   await ApiConfig.initialize();
+
+  // Initialize authentication
   await AuthService.initialize();
+
   runApp(const LegalServiceApp());
 }
 

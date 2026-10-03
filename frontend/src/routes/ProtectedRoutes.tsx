@@ -30,3 +30,20 @@ export const ClerkRoute: React.FC<{ children: React.ReactNode }> = ({ children }
   }
   return <Navigate to="/login" replace />;
 };
+
+
+export const LawyerRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  if (authApi.isLawyerAuthenticated()) {
+    return <>{children}</>;
+  }
+
+  if (authApi.isAdminAuthenticated()) {
+    return <Navigate to="/admin" replace />;
+  }
+
+  if (authApi.isClerkAuthenticated()) {
+    return <Navigate to="/clerk/cases" replace />;
+  }
+
+  return <Navigate to="/login" replace />;
+};

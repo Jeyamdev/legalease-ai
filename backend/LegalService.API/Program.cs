@@ -9,6 +9,7 @@ using LegalService.API.AgentIntegration;
 using LegalService.API.Middleware;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
+using System.Security.Claims;
 using System.Text;
 using System.Text.Json;
 
@@ -129,13 +130,37 @@ builder.Services.AddAuthentication(options =>
 
         ValidIssuer = builder.Configuration["Jwt:Issuer"],
         ValidAudience = builder.Configuration["Jwt:Audience"],
+        ClockSkew = TimeSpan.FromSeconds(30),
 
         IssuerSigningKey = new SymmetricSecurityKey(
             Encoding.UTF8.GetBytes(
                 builder.Configuration["Jwt:Key"]!
             ))
     };
+    options.Events = new JwtBearerEvents
+    {
+        OnTokenValidated = async context =>
+        {
+            if (!int.TryParse(context.Principal?.FindFirstValue(ClaimTypes.NameIdentifier), out var id))
+            {
+                context.Fail("Account unavailable.");
+                return;
+            }
+            var db = context.HttpContext.RequestServices.GetRequiredService<ApplicationDbContext>();
+            var user = await db.Users.AsNoTracking().SingleOrDefaultAsync(
+                account => account.UserId == id, context.HttpContext.RequestAborted);
+            if (user is null)
+            {
+                context.Fail("Account unavailable.");
+                return;
+            }
+            var identity = (ClaimsIdentity)context.Principal!.Identity!;
+            foreach (var claim in identity.FindAll(ClaimTypes.Role).ToArray()) identity.RemoveClaim(claim);
+            identity.AddClaim(new Claim(ClaimTypes.Role, user.Role));
+        }
+    };
 });
+builder.Services.AddAuthorization();
 
 var app = builder.Build();
 
@@ -201,13 +226,15 @@ using (var scope = app.Services.CreateScope())
     try
     {
         var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        var passwordService = scope.ServiceProvider.GetRequiredService<LegalService.API.Authentication.Services.IPasswordService>();
         await DbInitializer.SeedCategoriesAsync(dbContext);
         await DbInitializer.SeedDocumentationServicesAsync(dbContext);
+        await DbInitializer.SeedStaffAccountsAsync(dbContext, passwordService,app.Configuration);
     }
     catch (Exception ex)
     {
         var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
-        logger.LogError(ex, "Failed to seed lawyer categories or documentation services in database.");
+        logger.LogError(ex, "Failed to seed lawyer categories, documentation services, or staff accounts in database.");
     }
 }
 

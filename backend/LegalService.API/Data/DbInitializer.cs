@@ -149,4 +149,154 @@ public static class DbInitializer
 
         await context.SaveChangesAsync();
     }
+
+        public static async Task SeedStaffAccountsAsync(
+        ApplicationDbContext context,
+        LegalService.API.Authentication.Services.IPasswordService passwordService,
+        IConfiguration configuration)
+    {
+        // ---------------------------------------------------------
+        // Read development seed credentials from configuration
+        // ---------------------------------------------------------
+
+        var adminEmail =
+            configuration["SeedAccounts:AdminEmail"];
+
+        var adminPassword =
+            configuration["SeedAccounts:AdminPassword"];
+
+        var clerkEmail =
+            configuration["SeedAccounts:ClerkEmail"];
+
+        var clerkPassword =
+            configuration["SeedAccounts:ClerkPassword"];
+
+        // If seed accounts are not configured, do nothing.
+        if (string.IsNullOrWhiteSpace(adminEmail) ||
+            string.IsNullOrWhiteSpace(adminPassword) ||
+            string.IsNullOrWhiteSpace(clerkEmail) ||
+            string.IsNullOrWhiteSpace(clerkPassword))
+        {
+            return;
+        }
+
+        adminEmail = adminEmail.Trim().ToLowerInvariant();
+        clerkEmail = clerkEmail.Trim().ToLowerInvariant();
+
+        // ---------------------------------------------------------
+        // 1. Ensure Admin User
+        // ---------------------------------------------------------
+
+        var adminUser = await context.Users
+            .FirstOrDefaultAsync(u =>
+                u.Email.ToLower() == adminEmail);
+
+        if (adminUser == null)
+        {
+            adminUser = new User
+            {
+                Name = "System Administrator",
+                Email = adminEmail,
+                Role = "Admin",
+                PasswordHash =
+                    passwordService.HashPassword(adminPassword),
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow
+            };
+
+            context.Users.Add(adminUser);
+        }
+        else
+        {
+            adminUser.Role = "Admin";
+
+            adminUser.PasswordHash =
+                passwordService.HashPassword(adminPassword);
+
+            adminUser.UpdatedAt = DateTime.UtcNow;
+        }
+
+        // ---------------------------------------------------------
+        // 2. Ensure Clerk User
+        // ---------------------------------------------------------
+
+        var clerkUser = await context.Users
+            .FirstOrDefaultAsync(u =>
+                u.Email.ToLower() == clerkEmail);
+
+        if (clerkUser == null)
+        {
+            clerkUser = new User
+            {
+                Name = "Senior Legal Clerk",
+                Email = clerkEmail,
+                Role = "Clerk",
+                PasswordHash =
+                    passwordService.HashPassword(clerkPassword),
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow
+            };
+
+            context.Users.Add(clerkUser);
+        }
+        else
+        {
+            clerkUser.Role = "Clerk";
+
+            clerkUser.PasswordHash =
+                passwordService.HashPassword(clerkPassword);
+
+            clerkUser.UpdatedAt = DateTime.UtcNow;
+        }
+
+        // Save first so UserId values exist.
+        await context.SaveChangesAsync();
+
+        // ---------------------------------------------------------
+        // 3. Ensure Clerk profile
+        // ---------------------------------------------------------
+
+        var clerkProfile = await context.Clerks
+            .FirstOrDefaultAsync(c =>
+                c.UserId == clerkUser.UserId);
+
+        if (clerkProfile == null)
+        {
+            clerkProfile = await context.Clerks
+                .FirstOrDefaultAsync(c =>
+                    c.Email != null &&
+                    c.Email.ToLower() == clerkEmail);
+        }
+
+        if (clerkProfile == null)
+        {
+            clerkProfile = new Clerk
+            {
+                Name = clerkUser.Name,
+                Email = clerkUser.Email,
+                Contact = "+94 11 234 5678",
+                Department =
+                    "Legal Documentation & Conveyancing",
+                IsActive = true,
+                UserId = clerkUser.UserId,
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow
+            };
+
+            context.Clerks.Add(clerkProfile);
+        }
+        else
+        {
+            clerkProfile.Name = clerkUser.Name;
+            clerkProfile.Email = clerkUser.Email;
+
+            clerkProfile.UserId =
+                clerkUser.UserId;
+
+            clerkProfile.IsActive = true;
+            clerkProfile.UpdatedAt = DateTime.UtcNow;
+        }
+
+        await context.SaveChangesAsync();
+    }
 }

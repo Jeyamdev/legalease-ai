@@ -8,6 +8,13 @@ import { AdminRoute } from "./ProtectedRoutes";
 
 export const lawyerLegalServicesRoutes = <>
   <Route path="/admin/lawyers" element={<AdminRoute><Navigate to="/admin/lawyer-services/lawyers" replace /></AdminRoute>} />
+  <Route path="/admin/lawyer-management" element={<AdminRoute><Navigate to="/admin/lawyer-services/lawyers" replace /></AdminRoute>} />
+  <Route path="/admin/lawyer-management/new" element={<AdminRoute><Navigate to="/admin/lawyer-services/lawyers" replace /></AdminRoute>} />
+  <Route path="/admin/lawyer-management/:id" element={<AdminRoute><Navigate to="/admin/lawyer-services/lawyers" replace /></AdminRoute>} />
+  <Route path="/admin/lawyer-management/:id/edit" element={<AdminRoute><Navigate to="/admin/lawyer-services/lawyers" replace /></AdminRoute>} />
+  <Route path="/admin/lawyer-management/specializations" element={<AdminRoute><Navigate to="/admin/lawyer-services/specializations" replace /></AdminRoute>} />
+  <Route path="/admin/lawyer-management/legal-services" element={<AdminRoute><Navigate to="/admin/lawyer-services/legal-services" replace /></AdminRoute>} />
+  <Route path="/admin/lawyer-management/recommendation-test" element={<AdminRoute><Navigate to="/admin/lawyer-services/recommendations" replace /></AdminRoute>} />
   <Route path="/admin/lawyer-services" element={<AdminRoute><LawyerLegalServicesLayout /></AdminRoute>}>
     <Route index element={<Navigate to="lawyers" replace />} />
     <Route path="lawyers" element={<LawyersPage />} />

@@ -7,7 +7,7 @@ import { createServer } from "vite";
 
 const root = "/admin/lawyer-services";
 const admin = { userId: 1, name: "Test Admin", email: "admin@example.test", role: "Admin" };
-globalThis.localStorage = { getItem: key => key === "legalease_admin_user" ? JSON.stringify(admin) : null };
+globalThis.localStorage = { getItem: key => key === "legalease_staff_user" ? JSON.stringify(admin) : null };
 
 let server;
 let routes;

@@ -254,26 +254,35 @@ public class LawyersController : ControllerBase
             UpdatedAt = DateTime.UtcNow
         };
 
-        _context.Lawyers.Add(lawyer);
-
         // 5. Associate the single category (Many-to-Many bridge with 1 record)
-        _context.LawyerSpecializations.Add(new LawyerSpecialization
+        var specializationLink = new LawyerSpecialization
         {
             LawyerId = lawyer.LawyerId,
             SpecializationId = specialization.SpecializationId
-        });
+        };
 
         // 6. Create a new Lawyer account; never repurpose an existing identity.
         var initialPassword = !string.IsNullOrWhiteSpace(request.Password) ? request.Password : "LawyerPassword123!";
         var passwordHash = _passwordService.HashPassword(initialPassword);
 
-        _context.Users.Add(new User
+        var user = new User
         {
             Name = lawyer.Name, Email = normalizedEmail, Role = "Lawyer",
             PasswordHash = passwordHash, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow
-        });
+        };
+
+        // Persist the account first so the profile receives its generated login ID.
+        await using var transaction = _context.Database.IsRelational()
+            ? await _context.Database.BeginTransactionAsync()
+            : null;
+        _context.Users.Add(user);
+        await _context.SaveChangesAsync();
+        lawyer.UserId = user.UserId;
+        _context.Lawyers.Add(lawyer);
+        _context.LawyerSpecializations.Add(specializationLink);
 
         await _context.SaveChangesAsync();
+        if (transaction != null) await transaction.CommitAsync();
 
         var responseDto = new
         {

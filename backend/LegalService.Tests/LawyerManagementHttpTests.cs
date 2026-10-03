@@ -136,6 +136,9 @@ public sealed class LawyerManagementHttpTests : IAsyncLifetime
         var user = await scope.ServiceProvider.GetRequiredService<ApplicationDbContext>().Users.SingleAsync(u => u.Email == "updated@example.test");
         Assert.Equal("Lawyer", user.Role);
         Assert.NotEmpty(user.PasswordHash!);
+        var lawyer = await scope.ServiceProvider.GetRequiredService<ApplicationDbContext>().Lawyers
+            .SingleAsync(l => l.Email == user.Email);
+        Assert.Equal(user.UserId, lawyer.UserId);
     }
 
     [Fact]

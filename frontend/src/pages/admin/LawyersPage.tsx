@@ -15,8 +15,13 @@ import {
 } from "../../api/lawyersApi";
 import { lastLawyerPage, resetLawyerPage } from "../../components/lawyers/lawyerPageUtils";
 
-const errorMessage = (error: unknown, fallback: string) => axios.isAxiosError(error)
-  ? error.response?.data?.message || Object.values(error.response?.data?.errors ?? {}).flat().join(" ") || fallback : fallback;
+const errorMessage = (error: unknown, fallback: string) => {
+  if (!axios.isAxiosError(error)) return fallback;
+  if (error.response?.status === 401) return "Your session is no longer valid. Sign in again before saving.";
+  if (error.response?.status === 403) return "An administrator account is required to manage lawyers.";
+  if (!error.response) return "Unable to reach the backend. Check your connection and try again.";
+  return error.response.data?.message || Object.values(error.response.data?.errors ?? {}).flat().join(" ") || fallback;
+};
 
 export const LawyersPage: React.FC = () => {
   const moduleSummary = useOutletContext<LawyerServicesSummary | null>();

@@ -14,6 +14,8 @@ public class ApplicationDbContext : DbContext
     public DbSet<User> Users { get; set; }
     public DbSet<Role> Roles { get; set; }
     public DbSet<UserRole> UserRoles { get; set; }
+    public DbSet<LawyerWorkingSchedule> LawyerWorkingSchedules { get; set; }
+    public DbSet<LawyerUnavailability> LawyerUnavailabilities { get; set; }
     public DbSet<Lawyer> Lawyers { get; set; }
     public DbSet<Specialization> Specializations { get; set; }
     public DbSet<LawyerSpecialization> LawyerSpecializations { get; set; }
@@ -39,9 +41,48 @@ public class ApplicationDbContext : DbContext
     public DbSet<AuditLog> AuditLogs { get; set; }
     public DbSet<LawyerRecommendationWorkflow> LawyerRecommendationWorkflows { get; set; }
 
+    public DbSet<PracticeAreaWorkforceSetting> PracticeAreaWorkforceSettings { get; set; }
+    public DbSet<WorkforceDemoState> WorkforceDemoStates { get; set; }
+
+    public DbSet<HiringSuggestionWorkflow> HiringSuggestionWorkflows { get; set; }
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
+        modelBuilder.Entity<Lawyer>().Property(l => l.DefaultAppointmentDurationMinutes).HasDefaultValue(30);
+        modelBuilder.Entity<Lawyer>().ToTable(t => t.HasCheckConstraint("CK_Lawyer_Duration", "\"DefaultAppointmentDurationMinutes\" BETWEEN 15 AND 240"));
+        modelBuilder.Entity<LawyerWorkingSchedule>(e => {
+            e.HasKey(s => s.Id);
+            e.HasIndex(s => new { s.LawyerId, s.DayOfWeek }).IsUnique();
+            e.HasOne(s => s.Lawyer).WithMany().HasForeignKey(s => s.LawyerId).OnDelete(DeleteBehavior.Cascade);
+            e.ToTable(t => { t.HasCheckConstraint("CK_Schedule_Day", "\"DayOfWeek\" BETWEEN 0 AND 6"); t.HasCheckConstraint("CK_Schedule_Time", "NOT \"IsWorkingDay\" OR \"StartTime\" < \"EndTime\""); });
+        });
+        modelBuilder.Entity<LawyerUnavailability>(e => {
+            e.HasKey(s => s.Id);
+            e.HasIndex(s => new { s.LawyerId, s.StartDateTime, s.EndDateTime });
+            e.HasOne(s => s.Lawyer).WithMany().HasForeignKey(s => s.LawyerId).OnDelete(DeleteBehavior.Cascade);
+            e.Property(s => s.StartDateTime).HasColumnType("timestamp without time zone");
+            e.Property(s => s.EndDateTime).HasColumnType("timestamp without time zone");
+            e.Property(s => s.Reason).HasMaxLength(300);
+            e.ToTable(t => t.HasCheckConstraint("CK_Unavailability_Time", "\"StartDateTime\" < \"EndDateTime\""));
+        });
+        modelBuilder.Entity<LawyerAvailability>().HasIndex(s => new { s.LawyerId, s.Date });
+        modelBuilder.Entity<Appointment>().HasIndex(a => new { a.LawyerId, a.Status });
+
+
+        modelBuilder.Entity<PracticeAreaWorkforceSetting>(entity =>
+        {
+            entity.HasKey(x => x.Id);
+            entity.HasIndex(x => x.PracticeAreaId).IsUnique();
+            entity.HasOne<Specialization>().WithMany().HasForeignKey(x => x.PracticeAreaId).OnDelete(DeleteBehavior.Cascade);
+            entity.ToTable(t => t.HasCheckConstraint("CK_WorkforceSettings_Ranges", "\"MinimumActiveLawyers\" BETWEEN 0 AND 100 AND \"TargetActiveLawyers\" BETWEEN \"MinimumActiveLawyers\" AND 200 AND \"MinimumFutureSlots\" BETWEEN 0 AND 1000 AND \"HighDemandThreshold\" BETWEEN 0 AND 10000 AND \"WatchCapacityRatio\" > 0 AND \"WatchCapacityRatio\" <= 1"));
+        });
+        modelBuilder.Entity<WorkforceDemoState>(entity =>
+        {
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Id).ValueGeneratedNever();
+            entity.Property(x => x.ArtifactsJson).HasColumnType("jsonb").IsConcurrencyToken();
+        });
 
         modelBuilder.Entity<LawyerRecommendationWorkflow>(entity =>
         {
@@ -55,6 +96,24 @@ public class ApplicationDbContext : DbContext
             entity.HasIndex(x => x.OwnerUserId);
             entity.HasIndex(x => x.Status);
         });
+
+        modelBuilder.Entity<HiringSuggestionWorkflow>(entity =>
+        {
+            entity.HasKey(x => x.WorkflowId);
+            entity.Property(x => x.Status).HasMaxLength(32).IsRequired().IsConcurrencyToken();
+            entity.Property(x => x.SystemSnapshotJson).HasColumnType("jsonb");
+            entity.Property(x => x.AiDraftJson).HasColumnType("jsonb");
+            entity.Property(x => x.ReviewedDraftJson).HasColumnType("jsonb");
+            entity.Property(x => x.ApprovedTitle).HasMaxLength(200);
+            entity.HasOne<Specialization>().WithMany().HasForeignKey(x => x.PracticeAreaId).OnDelete(DeleteBehavior.SetNull);
+            entity.HasOne<Career>().WithMany().HasForeignKey(x => x.CareerOpeningId).OnDelete(DeleteBehavior.SetNull);
+            entity.HasIndex(x => new { x.OwnerUserId, x.Status });
+            entity.HasIndex(x => new { x.OwnerUserId, x.PracticeAreaId }).IsUnique().HasFilter("\"Status\" = 'AWAITING_APPROVAL' AND \"PracticeAreaId\" IS NOT NULL");
+        });
+        modelBuilder.Entity<Career>().HasOne<Specialization>().WithMany()
+            .HasForeignKey(x => x.PracticeAreaId).OnDelete(DeleteBehavior.SetNull);
+        // Careers has no closed state. One linked existing opening is active recruitment.
+        modelBuilder.Entity<Career>().HasIndex(x => x.PracticeAreaId).IsUnique().HasFilter("\"PracticeAreaId\" IS NOT NULL");
 
         // ==========================================
         // 1. IDENTITY AND AUTHORIZATION CONFIG

@@ -1,4 +1,5 @@
 using System.Threading.Tasks;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using LegalService.API.DTOs.Requests;
 using LegalService.API.Interfaces;
@@ -42,7 +43,7 @@ public class CareersController : ControllerBase
     /// <summary>
     /// Create a new career opening.
     /// </summary>
-    [HttpPost]
+    [HttpPost, Authorize(Roles = "Admin")]
     public async Task<IActionResult> Create([FromBody] CreateCareerRequest request)
     {
         if (!ModelState.IsValid)
@@ -55,7 +56,7 @@ public class CareersController : ControllerBase
     /// <summary>
     /// Update an existing career opening.
     /// </summary>
-    [HttpPut("{id:int}")]
+    [HttpPut("{id:int}"), Authorize(Roles = "Admin")]
     public async Task<IActionResult> Update(int id, [FromBody] UpdateCareerRequest request)
     {
         if (!ModelState.IsValid)
@@ -71,7 +72,7 @@ public class CareersController : ControllerBase
     /// <summary>
     /// Delete a career opening.
     /// </summary>
-    [HttpDelete("{id:int}")]
+    [HttpDelete("{id:int}"), Authorize(Roles = "Admin")]
     public async Task<IActionResult> Delete(int id)
     {
         var success = await _careerService.DeleteCareerAsync(id);

@@ -5,6 +5,8 @@ namespace LegalService.API.DTOs.Requests;
 
 public class CreateCareerRequest
 {
+    [Range(1, int.MaxValue)]
+    public int? PracticeAreaId { get; set; }
     [Required]
     public string JobTitle { get; set; } = string.Empty;
 
@@ -14,6 +16,8 @@ public class CreateCareerRequest
 
 public class UpdateCareerRequest
 {
+    [Range(1, int.MaxValue)]
+    public int? PracticeAreaId { get; set; }
     [Required]
     public string JobTitle { get; set; } = string.Empty;
 

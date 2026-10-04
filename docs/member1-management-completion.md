@@ -1,5 +1,7 @@
 # Member 1 management implementation report
 
+> Historical implementation report. The [3 October 2026 final verification report](member1-final-verification.md) supersedes its catalog, profile-service, ranking, architecture, and test-result descriptions.
+
 Branch: `feature/member1-lawyer-management`. Changes are uncommitted. No database reset, live database migration, live Gemini call, or seed command was run during this task.
 
 ## Existing implementation reused

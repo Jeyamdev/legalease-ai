@@ -1,3 +1,4 @@
+import { schedulingApi } from "./schedulingApi";
 import { apiClient } from "./apiClient";
 
 export interface WorkflowEvent {
@@ -16,7 +17,9 @@ export interface RecommendationResult {
   date?: string | null;
   appointmentId?: string | null;
   approvedLawyerId?: string | null;
-  parsedRequirement?: { requirement?: string; categoryName?: string | null; location?: string | null } | null;
+  parsedRequirement?: { requirement?: string; categoryId?: number | null; categoryName?: string | null;
+    location?: string | null; legalServiceId?: number | null; legalServiceName?: string | null;
+    matterSummary?: string | null; supported?: boolean | null } | null;
   recommendations: {
     lawyerId: string;
     score: number;
@@ -45,6 +48,6 @@ export const recommendationsApi = {
   customers: async (search: string) =>
     (await apiClient.get<RecommendationCustomer[]>("/api/lawyer-recommendations/customers", { params: { search } })).data,
   slots: async (lawyerId: string, date: string) =>
-    (await apiClient.get<RecommendationSlot[]>("/api/appointments/available-slots", { params: { lawyerId, date } })).data,
+    schedulingApi.slots(lawyerId, date),
   appointment: async (id: string) => (await apiClient.get<AppointmentSummary>(`/api/appointments/${id}`)).data,
 };

@@ -1,4 +1,6 @@
-import React, { useEffect, useState, useMemo } from "react";
+import { officeToday, nextDate, schedulingApi, availabilityReason } from "../../api/schedulingApi";
+import { useSearchParams } from "react-router-dom";
+import React, { useEffect, useState, useMemo, useRef } from "react";
 import { AdminLayout } from "../../components/layout/AdminLayout";
 import {
   appointmentsApi,
@@ -51,6 +53,8 @@ const FILTER_TABS = [
 ];
 
 export const AppointmentsPage: React.FC = () => {
+  const [searchParams] = useSearchParams();
+  const linkedAppointmentId = searchParams.get("appointment");
   const [appointments, setAppointments] = useState<AppointmentItem[]>([]);
   const [lawyers, setLawyers] = useState<LawyerItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -77,6 +81,8 @@ export const AppointmentsPage: React.FC = () => {
   const [rescheduleSlots, setRescheduleSlots] = useState<AvailabilitySlotItem[]>([]);
   const [selectedSlotId, setSelectedSlotId] = useState("");
   const [rescheduleReason, setRescheduleReason] = useState("");
+  const slotRequest = useRef(0);
+  const [slotReason, setSlotReason] = useState<string | null>(null);
   const [slotsLoading, setSlotsLoading] = useState(false);
 
   // Toast / feedback message
@@ -107,6 +113,15 @@ export const AppointmentsPage: React.FC = () => {
   useEffect(() => {
     loadData();
   }, []);
+
+  useEffect(() => {
+    if (!linkedAppointmentId) return;
+    let active = true;
+    appointmentsApi.getAppointmentById(linkedAppointmentId)
+      .then(details => { if (active) setDetailModalItem(details); })
+      .catch(() => { if (active) setError("The linked appointment details could not be loaded."); });
+    return () => { active = false; };
+  }, [linkedAppointmentId]);
 
   // Filtered list
   const filteredAppointments = useMemo(() => {
@@ -218,7 +233,7 @@ export const AppointmentsPage: React.FC = () => {
   const handleOpenReschedule = async (item: AppointmentItem) => {
     setReschedulingItem(item);
     // default to tomorrow or current appointment date
-    const d = item.date || new Date(Date.now() + 86400000).toISOString().split("T")[0];
+    const d = item.date || nextDate(officeToday());
     setRescheduleDate(d);
     setSelectedSlotId("");
     setRescheduleReason("");
@@ -226,19 +241,24 @@ export const AppointmentsPage: React.FC = () => {
   };
 
   const fetchSlotsForDate = async (lawyerId: string, date: string) => {
+    const version = ++slotRequest.current;
+    setRescheduleSlots([]); setSelectedSlotId(""); setSlotReason(null);
     try {
       setSlotsLoading(true);
-      const slots = await appointmentsApi.getLawyerSlots(lawyerId, date);
-      setRescheduleSlots(slots);
+      const response = await schedulingApi.slots(lawyerId, date);
+      if (version !== slotRequest.current) return;
+      setSlotReason(response.reason ?? null);
+      setRescheduleSlots(response.availableSlots.map(s => ({ slotId: s.slotId, availabilityId: "", date, startTime: s.start, endTime: s.end, isBooked: false })));
     } catch {
-      setRescheduleSlots([]);
+      if (version === slotRequest.current) { setRescheduleSlots([]); showToast("Unable to load available times."); }
     } finally {
-      setSlotsLoading(false);
+      if (version === slotRequest.current) setSlotsLoading(false);
     }
   };
 
   const handleRescheduleDateChange = async (newDate: string) => {
     setRescheduleDate(newDate);
+    slotRequest.current++; setRescheduleSlots([]); setSlotsLoading(false); setSlotReason(null);
     setSelectedSlotId("");
     if (reschedulingItem && newDate) {
       await fetchSlotsForDate(reschedulingItem.lawyerId, newDate);
@@ -247,7 +267,7 @@ export const AppointmentsPage: React.FC = () => {
 
   // Submit Reschedule
   const handleSubmitReschedule = async () => {
-    if (!reschedulingItem || !selectedSlotId) return;
+    if (!reschedulingItem || !selectedSlotId || slotsLoading || !rescheduleSlots.some(slot => slot.slotId === selectedSlotId && slot.date === rescheduleDate)) return;
     try {
       setActionProcessing(true);
       await appointmentsApi.rescheduleAppointment(
@@ -259,7 +279,8 @@ export const AppointmentsPage: React.FC = () => {
       setReschedulingItem(null);
       await loadData();
     } catch (err: any) {
-      showToast(err?.response?.data?.message || "Failed to reschedule appointment.");
+      showToast(err?.response?.data?.title || err?.response?.data?.message || "Failed to reschedule appointment.");
+      if (err?.response?.status === 409) await fetchSlotsForDate(reschedulingItem.lawyerId, rescheduleDate);
     } finally {
       setActionProcessing(false);
     }
@@ -604,22 +625,22 @@ export const AppointmentsPage: React.FC = () => {
                     Select New Date:
                   </label>
                   <input
-                    type="date"
+                    type="date" aria-label="Reschedule date"
                     value={rescheduleDate}
                     onChange={(e) => handleRescheduleDateChange(e.target.value)}
-                    min={new Date().toISOString().split("T")[0]}
+                    min={officeToday()}
                     className="w-full py-2 px-3 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none"
                   />
                 </div>
 
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 uppercase mb-1">
-                    Select Available Afternoon Slot (3:00 – 5:00 PM):
+                    Select Available Slot:
                   </label>
                   {slotsLoading ? (
                     <div className="text-xs text-slate-500 py-2">Loading slots for date...</div>
                   ) : rescheduleSlots.length === 0 ? (
-                    <div className="text-xs text-rose-500 py-2">No available slots for this date.</div>
+                    <div className="text-xs text-rose-500 py-2">{availabilityReason(slotReason)}</div>
                   ) : (
                     <div className="grid grid-cols-2 gap-2 mt-1">
                       {rescheduleSlots.map((s) => {

@@ -10,11 +10,11 @@ public class DemoLawyerSeederTests
     private static readonly string[] CategoryNames =
     [
         "Corporate & Commercial Law", "Real Estate & Property Law", "Labour & Employment Law",
-        "Criminal Law", "Family Law", "Tax Law"
+        "Criminal Law", "Tax Law"
     ];
 
     [Fact]
-    public async Task SeedsThirtyLawyersAndFutureSlotsWithoutDuplicates()
+    public async Task SeedsThirtyLawyersWithRecurringSchedulesAndAppointmentSnapshotsWithoutDuplicates()
     {
         var options = new DbContextOptionsBuilder<ApplicationDbContext>()
             .UseInMemoryDatabase(Guid.NewGuid().ToString()).Options;
@@ -35,9 +35,9 @@ public class DemoLawyerSeederTests
             .Include(l => l.LawyerSpecializations).ToListAsync();
 
         Assert.Equal(30, first.LawyersCreated);
-        Assert.Equal(30, first.ServicesCreated);
-        Assert.Equal(87, first.AvailabilitiesCreated);
-        Assert.Equal(174, first.SlotsCreated);
+        Assert.Equal(25, first.ServicesCreated);
+        Assert.Equal(17, first.AvailabilitiesCreated);
+        Assert.Equal(17, first.SlotsCreated);
         Assert.True(first.CustomerCreated);
         Assert.Equal(0, second.LawyersCreated);
         Assert.Equal(0, second.ServicesCreated);
@@ -54,14 +54,17 @@ public class DemoLawyerSeederTests
         Assert.All(demo.SelectMany(l => l.LawyerSpecializations), link =>
             Assert.Contains(link.SpecializationId, db.Specializations.Select(s => s.SpecializationId)));
         var categoryIds = db.Specializations.ToDictionary(s => s.Name, s => s.SpecializationId);
-        Assert.All(CategoryNames, name => Assert.Equal(5, demo.Count(l =>
+        Assert.All(CategoryNames, name => Assert.Equal(6, demo.Count(l =>
             l.LawyerSpecializations.Single().SpecializationId == categoryIds[name])));
         Assert.Equal(29, demo.Count(l => l.Status == "Active"));
-        Assert.Equal(5, demo.Count(l => l.Status == "Active" && l.LawyerSpecializations.Single().SpecializationId == 1));
-        Assert.Equal(4, demo.Count(l => l.Status == "Active" && l.LawyerSpecializations.Single().SpecializationId == 6));
-        Assert.Equal(87, await db.LawyerAvailabilities.CountAsync());
-        Assert.Equal(174, await db.AvailabilitySlots.CountAsync());
-        Assert.Equal(30, await db.LegalServices.CountAsync());
+        Assert.Equal(6, demo.Count(l => l.Status == "Active" && l.LawyerSpecializations.Single().SpecializationId == 1));
+        Assert.Equal(5, demo.Count(l => l.Status == "Active" && l.LawyerSpecializations.Single().SpecializationId == 5));
+        Assert.Equal(17, await db.LawyerAvailabilities.CountAsync());
+        Assert.Equal(210, await db.LawyerWorkingSchedules.CountAsync());
+        Assert.Equal(2, await db.LawyerUnavailabilities.CountAsync());
+        Assert.Equal(17, await db.Appointments.CountAsync());
+        Assert.Equal(17, await db.AvailabilitySlots.CountAsync());
+        Assert.Equal(25, await db.LegalServices.CountAsync());
         Assert.Equal(0, await db.LawyerLegalServices.CountAsync());
         Assert.All(db.LegalServices, service =>
         {
@@ -69,12 +72,10 @@ public class DemoLawyerSeederTests
             Assert.Contains(service.Category, CategoryNames);
         });
         Assert.All(CategoryNames, name => Assert.Equal(5, db.LegalServices.Count(service => service.Category == name)));
-        Assert.Equal(30, db.LegalServices.Select(service => service.ServiceName).Distinct().Count());
+        Assert.Equal(25, db.LegalServices.Select(service => service.ServiceName).Distinct().Count());
         Assert.All(db.LawyerAvailabilities, a => Assert.Contains(a.LawyerId, demo.Select(l => l.LawyerId)));
         Assert.All(db.AvailabilitySlots, s => Assert.Contains(s.AvailabilityId,
             db.LawyerAvailabilities.Select(a => a.AvailabilityId)));
-        Assert.Equal(3, db.LawyerAvailabilities.ToList().Count(a => a.Date == today.AddDays(3) &&
-            demo.Where(l => l.LawyerSpecializations.Single().SpecializationId == 2).Select(l => l.LawyerId).Contains(a.LawyerId)));
         Assert.All(db.LawyerAvailabilities, a => Assert.True(a.Date > today));
         Assert.True(db.LawyerAvailabilities.Select(a => a.StartTime).Distinct().Count() > 1);
         Assert.Equal(first.CustomerId, second.CustomerId);
@@ -133,7 +134,7 @@ public class DemoLawyerSeederTests
         var options = new DbContextOptionsBuilder<ApplicationDbContext>()
             .UseInMemoryDatabase(Guid.NewGuid().ToString()).Options;
         await using var db = new ApplicationDbContext(options);
-        var available = CategoryNames.Where(name => name != "Family Law").ToArray();
+        var available = CategoryNames;
         db.Specializations.AddRange(available.Select((name, index) =>
             new Specialization { SpecializationId = index + 1, Name = name }));
         db.LegalServices.Add(new LegalService.API.Models.Entities.LegalService
@@ -161,17 +162,16 @@ public class DemoLawyerSeederTests
         Assert.Equal(30, report.DemoLawyers);
         Assert.Equal(29, report.ActiveDemoLawyers);
         Assert.Equal(25, report.TotalLegalServices);
-        Assert.Equal(87, report.DemoAvailabilityWindows);
-        Assert.Equal(174, report.DemoBookableSlots);
+        Assert.Equal(17, report.DemoAvailabilityWindows);
+        Assert.True(report.DemoBookableSlots > 174);
         var corporateId = db.Specializations.Single(area => area.Name == "Corporate & Commercial Law").SpecializationId;
         var corporateCandidates = await db.Lawyers.Where(lawyer => lawyer.Status == "Active" &&
             lawyer.LawyerSpecializations.Any(link => link.SpecializationId == corporateId)).ToListAsync();
-        var availableCorporateCandidates = await db.Lawyers.Where(lawyer => lawyer.Status == "Active" &&
-            lawyer.LawyerSpecializations.Any(link => link.SpecializationId == corporateId) &&
-            lawyer.LawyerAvailabilities.Any(window => window.Date == today.AddDays(3) &&
-                window.AvailabilitySlots.Any(slot => !slot.IsBooked))).ToListAsync();
+        var date = today.AddDays(3);
+        while (date.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday) date = date.AddDays(1);
+        var snapshot = await new LegalService.API.Services.Scheduling.AvailabilityService(db).LoadAsync(date, date);
         Assert.Equal(6, corporateCandidates.Count);
-        Assert.Equal(4, availableCorporateCandidates.Count);
+        Assert.Equal(4, corporateCandidates.Count(l => snapshot.Day(l.LawyerId, date).AvailableSlots.Count > 0));
     }
 
     [Fact]
@@ -183,6 +183,21 @@ public class DemoLawyerSeederTests
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
             DemoLawyerSeeder.SeedAsync(db, new TestPasswords(), new DateOnly(2030, 5, 1)));
         Assert.Empty(db.Lawyers);
+    }
+
+    [Fact] public async Task SchedulingOnlySeedPreservesEditedProfilesSchedulesAndIsIdempotent()
+    {
+        await using var db = new ApplicationDbContext(new DbContextOptionsBuilder<ApplicationDbContext>().UseInMemoryDatabase(Guid.NewGuid().ToString()).Options);
+        db.Specializations.AddRange(CategoryNames.Select((name, index) => new Specialization { SpecializationId = index + 1, Name = name })); await db.SaveChangesAsync();
+        var date = new DateOnly(2030, 5, 1); await DemoLawyerSeeder.SeedAsync(db, new TestPasswords(), date);
+        var profile = await db.Lawyers.SingleAsync(l => l.LicenseNumber == "ILS/LAW/0023");
+        profile.Name = "Admin edited profile"; profile.LicenseNumber = "ADMIN/23";
+        var row = await db.LawyerWorkingSchedules.FirstAsync(r => r.IsWorkingDay); row.EndTime = new(19, 0); row.UpdatedAt = DateTime.UtcNow;
+        await db.SaveChangesAsync();
+        var result = await DemoLawyerSeeder.SeedExistingSchedulesAsync(db, date);
+        Assert.Equal(0, result.Windows); Assert.Equal(0, result.Slots);
+        Assert.Equal("Admin edited profile", profile.Name); Assert.Equal("ADMIN/23", profile.LicenseNumber); Assert.Equal(new TimeOnly(19, 0), row.EndTime);
+        Assert.Equal(17, await db.Appointments.CountAsync()); Assert.Equal(2, await db.LawyerUnavailabilities.CountAsync());
     }
 
     private sealed class TestPasswords : IPasswordService

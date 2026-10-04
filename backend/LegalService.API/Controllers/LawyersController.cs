@@ -9,6 +9,7 @@ using LegalService.API.Data;
 using LegalService.API.DTOs.Requests;
 using LegalService.API.Interfaces;
 using LegalService.API.Models.Entities;
+using LegalService.API.Services.Scheduling;
 
 namespace LegalService.API.Controllers;
 
@@ -19,15 +20,17 @@ public class LawyersController : ControllerBase
     private readonly ApplicationDbContext _context;
     private readonly IAppointmentService _appointmentService;
     private readonly IPasswordService _passwordService;
+    private readonly AvailabilityService availability;
 
     public LawyersController(
         ApplicationDbContext context,
         IAppointmentService appointmentService,
-        IPasswordService passwordService)
+        IPasswordService passwordService, AvailabilityService? scheduling = null)
     {
         _context = context;
         _appointmentService = appointmentService;
         _passwordService = passwordService;
+        availability = scheduling ?? new(context);
     }
 
     /// <summary>
@@ -40,7 +43,8 @@ public class LawyersController : ControllerBase
         [FromQuery] string? search,
         [FromQuery] DateOnly? date = null,
         [FromQuery] int? page = null,
-        [FromQuery] int? pageSize = null)
+        [FromQuery] int? pageSize = null,
+        [FromQuery] string? status = null)
     {
         var paged = page.HasValue || pageSize.HasValue;
         var currentPage = page ?? 1;
@@ -54,6 +58,12 @@ public class LawyersController : ControllerBase
             .AsNoTracking()
             .AsQueryable();
 
+        if (!string.IsNullOrWhiteSpace(status))
+        {
+            if (status is not ("Active" or "Inactive" or "Pending"))
+                return BadRequest(new { message = "Status must be Active, Inactive, or Pending." });
+            query = query.Where(l => l.Status == status);
+        }
         if (!string.IsNullOrWhiteSpace(specialization) && specialization != "All")
         {
             var filter = specialization.Trim().ToLowerInvariant();
@@ -82,8 +92,12 @@ public class LawyersController : ControllerBase
         }
 
         if (date.HasValue)
-            query = query.Where(l => l.Status == "Active" && l.LawyerAvailabilities.Any(a =>
-                a.Date == date.Value && a.AvailabilitySlots.Any(slot => !slot.IsBooked)));
+        {
+            var availability = new AvailabilityService(_context);
+            var snapshot = await availability.LoadAsync(date.Value, date.Value);
+            var availableIds = snapshot.Lawyers.Where(l => snapshot.Day(l.Id, date.Value).AvailableSlots.Count > 0).Select(l => l.Id).ToArray();
+            query = query.Where(l => availableIds.Contains(l.LawyerId) && l.LawyerSpecializations.Count == 1);
+        }
 
         var totalItems = paged ? await query.CountAsync() : 0;
         var totalLawyers = paged ? await _context.Lawyers.CountAsync() : 0;
@@ -135,12 +149,19 @@ public class LawyersController : ControllerBase
             .Include(l => l.LawyerSpecializations)
                 .ThenInclude(ls => ls.Specialization)
             .AsNoTracking()
-            .Include(l => l.LawyerLegalServices).ThenInclude(ls => ls.LegalService)
             .FirstOrDefaultAsync(l => l.LawyerId == id);
 
         if (lawyer == null)
             return NotFound(new { message = $"Lawyer with ID '{id}' not found." });
 
+        // Service eligibility follows the one Practice Area, never legacy assignments.
+        var areaName = lawyer.LawyerSpecializations.Count == 1
+            ? lawyer.LawyerSpecializations.Single().Specialization.Name : null;
+        var eligibleServices = await _context.LegalServices.AsNoTracking()
+            .Where(service => areaName != null && service.Category.ToLower() == areaName.ToLower())
+            .OrderBy(service => service.ServiceName)
+            .Select(service => new { service.LegalServiceId, service.ServiceName, service.Description, service.Category })
+            .ToListAsync();
         return Ok(new
         {
             lawyerId = lawyer.LawyerId,
@@ -152,11 +173,7 @@ public class LawyersController : ControllerBase
             licenseNumber = lawyer.LicenseNumber,
             profileDescription = lawyer.ProfileDescription,
             status = lawyer.Status,
-            legalServices = lawyer.LawyerLegalServices.Select(ls => new
-            {
-                legalServiceId = ls.LegalServiceId, serviceName = ls.LegalService.ServiceName,
-                description = ls.LegalService.Description, category = ls.LegalService.Category
-            }).ToList(),
+            legalServices = eligibleServices,
             specializations = lawyer.LawyerSpecializations.Select(ls => new
             {
                 specializationId = ls.SpecializationId,
@@ -215,6 +232,7 @@ public class LawyersController : ControllerBase
         if (!ModelState.IsValid)
             return BadRequest(ModelState);
 
+        if (request.WorkingSchedule is not null) LawyerScheduleService.Validate(request.WorkingSchedule);
         var normalizedEmail = request.Email.Trim().ToLowerInvariant();
         var normalizedLicense = request.LicenseNumber.Trim().ToUpperInvariant();
 
@@ -236,7 +254,7 @@ public class LawyersController : ControllerBase
 
         var specialization = await ResolveSpecialization(request);
         if (specialization == null)
-            return BadRequest(new { message = "Select an existing specialization." });
+            return BadRequest(new { message = "Select an existing Practice Area." });
 
         // 4. Create Lawyer record
         var lawyer = new Lawyer
@@ -253,6 +271,10 @@ public class LawyersController : ControllerBase
             CreatedAt = DateTime.UtcNow,
             UpdatedAt = DateTime.UtcNow
         };
+
+        lawyer.DefaultAppointmentDurationMinutes = request.WorkingSchedule?.AppointmentDurationMinutes ?? 30;
+        var workingDays = request.WorkingSchedule?.Days ?? Enumerable.Range(0, 7).Select(day => new LegalService.API.DTOs.Scheduling.WorkingDayDto((DayOfWeek)day, false, new(9, 0), new(17, 0))).ToList();
+
 
         // 5. Associate the single category (Many-to-Many bridge with 1 record)
         var specializationLink = new LawyerSpecialization
@@ -279,6 +301,7 @@ public class LawyersController : ControllerBase
         await _context.SaveChangesAsync();
         lawyer.UserId = user.UserId;
         _context.Lawyers.Add(lawyer);
+        foreach (var day in workingDays) _context.LawyerWorkingSchedules.Add(new() { LawyerId = lawyer.LawyerId, DayOfWeek = day.DayOfWeek, StartTime = day.StartTime, EndTime = day.EndTime, IsWorkingDay = day.IsWorkingDay });
         _context.LawyerSpecializations.Add(specializationLink);
 
         await _context.SaveChangesAsync();
@@ -320,6 +343,7 @@ public class LawyersController : ControllerBase
             .Include(l => l.LawyerSpecializations)
             .Include(l => l.AvailabilitySlots)
             .Include(l => l.LawyerAvailabilities)
+                .ThenInclude(a => a.AvailabilitySlots)
             .FirstOrDefaultAsync(l => l.LawyerId == id);
 
         if (lawyer == null)
@@ -367,6 +391,7 @@ public class LawyersController : ControllerBase
                 name = s.Name,
                 description = s.Description,
                 lawyerCount = s.LawyerSpecializations.Count,
+                activeLawyerCount = s.LawyerSpecializations.Count(link => link.Lawyer.Status == "Active" && link.Lawyer.LawyerSpecializations.Count == 1),
                 legalServiceCount = _context.LegalServices.Count(service => service.Category.ToLower() == s.Name.ToLower())
             })
             .ToListAsync();
@@ -387,7 +412,7 @@ public class LawyersController : ControllerBase
         }
         else
         {
-            queryDate = DateOnly.FromDateTime(DateTime.UtcNow.AddDays(1));
+            queryDate = availability.Today;
         }
 
         var slots = await _appointmentService.GetAvailableSlotsAsync(id, queryDate);
@@ -406,11 +431,13 @@ public class LawyersController : ControllerBase
     public async Task<IActionResult> UpdateLawyer(Guid id, UpdateLawyerRequest request)
     {
         if (!ModelState.IsValid) return BadRequest(ModelState);
+        await using var transaction = await availability.BeginMutationAsync();
+        await availability.LockLawyerAsync(id);
         var lawyer = await _context.Lawyers.Include(l => l.LawyerSpecializations)
             .SingleOrDefaultAsync(l => l.LawyerId == id);
         if (lawyer == null) return NotFound(new { message = "Lawyer not found." });
         var specialization = await ResolveSpecialization(request);
-        if (specialization == null) return BadRequest(new { message = "Select an existing specialization." });
+        if (specialization == null) return BadRequest(new { message = "Select an existing Practice Area." });
         var email = request.Email.Trim().ToLowerInvariant();
         var license = request.LicenseNumber.Trim().ToUpperInvariant();
         var previousEmail = lawyer.Email?.ToLowerInvariant();
@@ -443,6 +470,9 @@ public class LawyersController : ControllerBase
             account.UpdatedAt = DateTime.UtcNow;
         }
         await _context.SaveChangesAsync();
+        if (request.WorkingSchedule is not null)
+            await new LawyerScheduleService(_context, availability).SaveAsync(id, request.WorkingSchedule);
+        if (transaction is not null) await transaction.CommitAsync();
         // Reload after relationship changes so the response reflects only current assignments.
         _context.ChangeTracker.Clear();
         return await GetLawyerById(id);
@@ -451,22 +481,9 @@ public class LawyersController : ControllerBase
     [HttpGet("{id:guid}/availability")]
     public async Task<IActionResult> GetAvailability(Guid id, [FromQuery] DateOnly? date = null)
     {
-        var lawyer = await _context.Lawyers.AsNoTracking().SingleOrDefaultAsync(l => l.LawyerId == id);
-        if (lawyer == null) return NotFound(new { message = "Lawyer not found." });
-        var query = _context.AvailabilitySlots.AsNoTracking().Where(s =>
-            s.LawyerAvailability.LawyerId == id && !s.IsBooked && lawyer.Status == "Active");
-        if (date.HasValue) query = query.Where(s => s.LawyerAvailability.Date == date.Value);
-        else
-        {
-            var today = DateOnly.FromDateTime(DateTime.UtcNow);
-            query = query.Where(s => s.LawyerAvailability.Date >= today);
-        }
-        return Ok(await query.OrderBy(s => s.LawyerAvailability.Date).ThenBy(s => s.StartTime)
-            .Select(s => new LegalService.API.DTOs.Appointments.AvailabilitySlotResponse
-            {
-                SlotId = s.SlotId, AvailabilityId = s.AvailabilityId, Date = s.LawyerAvailability.Date,
-                StartTime = s.StartTime, EndTime = s.EndTime, IsBooked = s.IsBooked
-            }).ToListAsync());
+        var service = new AvailabilityService(_context);
+        var slots = await _appointmentService.GetAvailableSlotsAsync(id, date ?? service.Today);
+        return Ok(slots);
     }
 
 }

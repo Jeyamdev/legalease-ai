@@ -1,3 +1,4 @@
+using LegalService.API.Services.Scheduling;
 using System.ComponentModel.DataAnnotations;
 using System.Net.Http.Json;
 using System.Security.Claims;
@@ -8,6 +9,7 @@ using LegalService.API.Infrastructure;
 using LegalService.API.Interfaces;
 using LegalService.API.Models.Entities;
 using Microsoft.EntityFrameworkCore;
+using Npgsql;
 
 namespace LegalService.API.Services.Lawyers;
 
@@ -33,7 +35,13 @@ public record Recommendation(Guid LawyerId, int Score, string Reason)
     public string? PracticeArea { get; init; }
 }
 public record ParsedLegalRequirement(string Requirement, int? CategoryId, string? CategoryName,
-    string? Location, string? PreferredDate, List<string> Keywords);
+    string? Location, string? PreferredDate, List<string> Keywords)
+{
+    public int? LegalServiceId { get; init; }
+    public string? LegalServiceName { get; init; }
+    public string? MatterSummary { get; init; }
+    public bool? Supported { get; init; }
+}
 public record WorkflowEvent(DateTime Timestamp, string Step, string Status, string Summary,
     string? InputSummary = null, string? OutputSummary = null, string? Error = null);
 public record RecommendationResponse(List<Recommendation> Recommendations, List<string> Warnings,
@@ -49,8 +57,9 @@ public interface ILawyerRecommendationService
 }
 
 public sealed class RecommendationService(HttpClient client, IConfiguration config, ApplicationDbContext db,
-    IAppointmentService appointments) : ILawyerRecommendationService
+    IAppointmentService appointments, ILogger<RecommendationService>? logger = null, AvailabilityService? scheduling = null) : ILawyerRecommendationService
 {
+    private readonly AvailabilityService availability = scheduling ?? new(db, config: config);
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     public async Task<RecommendationResponse> RecommendAsync(RecommendationRequest request, int userId, CancellationToken ct)
@@ -58,8 +67,17 @@ public sealed class RecommendationService(HttpClient client, IConfiguration conf
         var errors = new List<System.ComponentModel.DataAnnotations.ValidationResult>();
         if (!Validator.TryValidateObject(request, new ValidationContext(request), errors, true) || request.Requirement.Trim().Length < 3)
             throw new ApiException(400, "Describe your legal requirement using at least three characters.");
+        var now = DateTime.UtcNow;
+        var today = availability.Today;
+        var currentTime = TimeOnly.FromDateTime(now);
+        if (request.Date < today)
+            throw new ApiException(400, "Preferred date must not be in the past.");
         if (!Uri.TryCreate(config["Ai:BaseUrl"], UriKind.Absolute, out var url) || string.IsNullOrWhiteSpace(config["Ai:InternalKey"]))
+        {
+            logger?.LogWarning("Recommendation failure Stage={Stage} BaseUrlConfigured={BaseUrlConfigured} InternalKeyConfigured={InternalKeyConfigured}",
+                "configuration", url is not null, !string.IsNullOrWhiteSpace(config["Ai:InternalKey"]));
             throw new ApiException(503, "Lawyer recommendations are not configured.");
+        }
 
         var workflow = new LawyerRecommendationWorkflow
         {
@@ -78,16 +96,21 @@ public sealed class RecommendationService(HttpClient client, IConfiguration conf
                 .Select(s => new { id = s.SpecializationId, name = s.Name, description = s.Description }).ToListAsync(ct);
             var services = await db.LegalServices.AsNoTracking()
                 .Select(s => new { id = s.LegalServiceId, name = s.ServiceName, description = s.Description, category = s.Category }).ToListAsync(ct);
-            var candidates = await db.Lawyers.AsNoTracking().AsSplitQuery()
-                .Where(l => l.Status == "Active")
+            var candidateProfiles = await db.Lawyers.AsNoTracking().AsSplitQuery()
+                .Where(l => l.Status == "Active" && l.LawyerSpecializations.Count == 1 && l.Experience >= 0 && l.Experience <= 70)
                 .Select(l => new
                 {
                     lawyerId = l.LawyerId, status = l.Status, experience = l.Experience,
                     specializations = l.LawyerSpecializations.Select(s => new { id = s.SpecializationId, name = s.Specialization.Name }).ToList(),
-                    availableDates = l.LawyerAvailabilities.Where(a => a.AvailabilitySlots.Any(slot => !slot.IsBooked))
-                        .Select(a => a.Date).ToList()
                 }).ToListAsync(ct);
-            AddEvent(workflow, "search_lawyers", "completed", "Controlled database snapshot supplied to matcher",
+            var from = request.Date ?? today;
+            var snapshot = await availability.LoadAsync(from, request.Date ?? today.AddDays(365), candidateProfiles.Select(l => l.lawyerId), ct);
+            var candidates = candidateProfiles.Select(l => new {
+                l.lawyerId, l.status, l.experience, l.specializations,
+                availableDates = Enumerable.Range(0, request.Date is null ? 366 : 1)
+                    .Select(offset => from.AddDays(offset)).Where(date => snapshot.Day(l.lawyerId, date).AvailableSlots.Count > 0).ToList()
+            }).ToList();
+            AddEvent(workflow, "snapshot_loaded", "completed", "Controlled database snapshot supplied to matcher",
                 input: $"{specializations.Count} categories; {services.Count} services",
                 output: JsonSerializer.Serialize(new { candidateCount = candidates.Count,
                     candidateIds = candidates.Select(c => c.lawyerId).ToArray() }, JsonOptions));
@@ -97,7 +120,18 @@ public sealed class RecommendationService(HttpClient client, IConfiguration conf
                 Content = JsonContent.Create(new { request.Requirement, request.Date, request.Limit, specializations, services, candidates })
             };
             message.Headers.Add("X-Internal-Key", config["Ai:InternalKey"]);
+            message.Headers.Add("X-Correlation-ID", workflow.WorkflowId.ToString());
             using var response = await client.SendAsync(message, ct);
+            // Never log headers, upstream bodies, URLs containing credentials, or requirement text.
+            var upstreamStage = (int)response.StatusCode switch
+            {
+                401 or 403 => "internal_authentication", 404 => "route", 422 => "validation",
+                503 => "classification_unavailable", >= 500 => "service_unavailable", _ => "response"
+            };
+            if (!response.IsSuccessStatusCode)
+                logger?.LogWarning("Recommendation upstream failure Service={Service} Route={Route} Status={Status} Stage={Stage} CorrelationId={CorrelationId}",
+                    "lawyer-recommendation", "/lawyer-recommendations", (int)response.StatusCode, upstreamStage, workflow.WorkflowId);
+            else logger?.LogInformation("Recommendation upstream response Status={Status} CorrelationId={CorrelationId}", (int)response.StatusCode, workflow.WorkflowId);
             if ((int)response.StatusCode == 422) throw new ApiException(422, "The legal category was invalid. Refine the requirement.");
             if (!response.IsSuccessStatusCode) throw new ApiException(503, "Requirement understanding is temporarily unavailable.");
             var result = await response.Content.ReadFromJsonAsync<RecommendationResponse>(JsonOptions, ct)
@@ -115,30 +149,70 @@ public sealed class RecommendationService(HttpClient client, IConfiguration conf
             else if (parsed.CategoryName is not null)
                 throw new ApiException(422, "The legal category was invalid.");
 
+            if (parsed.LegalServiceId is int serviceId)
+            {
+                if (parsed.CategoryId is null || !await db.LegalServices.AsNoTracking().AnyAsync(s =>
+                    s.LegalServiceId == serviceId && s.ServiceName == parsed.LegalServiceName &&
+                    s.Category.ToLower() == parsed.CategoryName!.ToLower(), ct))
+                    throw new ApiException(422, "The interpreted Legal Service does not belong to the verified Practice Area.");
+            }
+            else if (parsed.LegalServiceName is not null)
+                throw new ApiException(422, "The interpreted Legal Service was invalid.");
+            if (parsed.MatterSummary?.Length > 300)
+                throw new ApiException(502, "Invalid recommendation interpretation.");
+            parsed = parsed with { Supported = parsed.CategoryId is not null };
+
+            if (request.Date is null &&
+                (!DateOnly.TryParseExact(parsed.PreferredDate, "yyyy-MM-dd", out var parsedDate)
+                    ? result.Date is not null || parsed.PreferredDate is not null
+                    : result.Date != parsedDate))
+                throw new ApiException(502, "Recommendation date did not match the interpreted requirement.");
             var effectiveDate = request.Date ?? result.Date;
+            if (effectiveDate < today)
+                throw new ApiException(422, "Preferred date must not be in the past.");
             if (request.Date is not null && result.Date != request.Date)
                 throw new ApiException(502, "Recommendation date did not match the requested date.");
+            // The controlled snapshot covers one year when a date is inferred from text.
+            // For a later interpreted date, calculate that single day and apply the same
+            // recorded-experience / stable-ID ordering; never invent or persist future slots.
+            if (request.Date is null && effectiveDate > today.AddDays(365) && result.Recommendations.Count == 0 && parsed.CategoryId is not null)
+            {
+                var later = await availability.LoadAsync(effectiveDate.Value, effectiveDate.Value, candidateProfiles.Select(l => l.lawyerId), ct);
+                var ranked = candidateProfiles.Where(l => l.specializations.Any(s => s.id == parsed.CategoryId) && later.Day(l.lawyerId, effectiveDate.Value).AvailableSlots.Count > 0)
+                    .OrderByDescending(l => l.experience).ThenBy(l => l.lawyerId.ToString(), StringComparer.Ordinal).Take(request.Limit)
+                    .Select(l => new Recommendation(l.lawyerId, l.experience, "System-verified requested-date availability.")).ToList();
+                result = result with { Recommendations = ranked };
+            }
             var ids = result.Recommendations.Select(r => r.LawyerId).ToArray();
             if (ids.Distinct().Count() != ids.Length || (ids.Length > 0 && parsed.CategoryId is null))
                 throw new ApiException(502, "Recommendation identities are invalid.");
             var valid = await db.Lawyers.AsNoTracking()
-                .Where(l => ids.Contains(l.LawyerId) && l.Status == "Active" &&
-                    l.LawyerSpecializations.Any(s => s.SpecializationId == parsed.CategoryId))
-                .Where(l => effectiveDate == null || l.LawyerAvailabilities.Any(a => a.Date == effectiveDate && a.AvailabilitySlots.Any(slot => !slot.IsBooked)))
+                .Where(l => ids.Contains(l.LawyerId) && l.Status == "Active" && l.Experience >= 0 && l.Experience <= 70 &&
+                    l.LawyerSpecializations.Count == 1 && l.LawyerSpecializations.Any(s => s.SpecializationId == parsed.CategoryId))
                 .Select(l => l.LawyerId).ToListAsync(ct);
+            if (effectiveDate is not null) {
+                var verified = await availability.LoadAsync(effectiveDate.Value, effectiveDate.Value, valid, ct);
+                valid = valid.Where(id => verified.Day(id, effectiveDate.Value).AvailableSlots.Count > 0).ToList();
+            }
             if (ids.Any(id => !valid.Contains(id)))
                 throw new ApiException(409, "Lawyer data changed. Request fresh recommendations.");
 
             var profiles = await db.Lawyers.AsNoTracking().Where(l => ids.Contains(l.LawyerId))
                 .Select(l => new { l.LawyerId, l.Name, l.Qualification, l.Experience })
                 .ToDictionaryAsync(l => l.LawyerId, ct);
-            var verifiedRecommendations = result.Recommendations.Select(r => r with
+            // Recompute display points/reasons from verified profiles rather than trusting external text.
+            var verifiedRecommendations = result.Recommendations.Select(r => new Recommendation(r.LawyerId,
+                profiles[r.LawyerId].Experience,
+                $"Practice Area match: {parsed.CategoryName}. {profiles[r.LawyerId].Experience} years of recorded experience. " +
+                (effectiveDate is not null
+                    ? $"Availability verified for requested date {effectiveDate:yyyy-MM-dd}; availability is rechecked at approval."
+                    : "Availability Not Filtered: no preferred date supplied; check an actual slot before booking."))
             {
                 FullName = profiles[r.LawyerId].Name,
                 Qualification = profiles[r.LawyerId].Qualification,
                 YearsExperience = profiles[r.LawyerId].Experience,
                 PracticeArea = parsed.CategoryName
-            }).ToList();
+            }).OrderByDescending(r => r.Score).ThenBy(r => r.LawyerId.ToString(), StringComparer.Ordinal).ToList();
             workflow.Status = parsed.CategoryId is null ? "UNSUPPORTED" : ids.Length == 0 ? "NO_MATCH" : "AWAITING_APPROVAL";
             workflow.CategoryId = parsed.CategoryId;
             workflow.RequestedDate = effectiveDate;
@@ -147,10 +221,26 @@ public sealed class RecommendationService(HttpClient client, IConfiguration conf
             workflow.WarningsJson = JsonSerializer.Serialize(result.Warnings, JsonOptions);
             foreach (var step in result.Trace)
             {
-                var name = step.TryGetProperty("step", out var property) ? property.GetString() ?? "agent" : "agent";
-                var stepStatus = step.TryGetProperty("status", out var statusProperty) ? statusProperty.GetString() : null;
-                AddEvent(workflow, name, stepStatus == "unsupported" ? "UNSUPPORTED" : "COMPLETED", "Recommendation stage recorded",
-                    output: step.ToString().Length > 400 ? step.ToString()[..400] : step.ToString());
+                if (step.ValueKind != JsonValueKind.Object || !step.TryGetProperty("step", out var property) || property.ValueKind != JsonValueKind.String)
+                    continue;
+                var name = property.GetString() ?? "agent";
+                // Persist public stage facts only, never arbitrary model output or hidden reasoning.
+                var summary = name switch {
+                    "parse_requirement" => "AI interpretation completed",
+                    "validate_category" => "Catalog validation completed",
+                    "search_lawyers" => "Eligible candidates retrieved",
+                    "rank_candidates" => "Deterministic ranking completed",
+                    "validate_recommendations" => "Agent results validated",
+                    "await_human_approval" => "Awaiting administrator review",
+                    _ => null
+                };
+                if (summary is null) continue;
+                var facts = new Dictionary<string, int>();
+                foreach (var field in new[] { "candidateCount", "eligibleCount", "validatedCount" })
+                    if (step.TryGetProperty(field, out var value) && value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out var count) && count >= 0)
+                        facts[field] = count;
+                AddEvent(workflow, name, name == "validate_category" && parsed.CategoryId is null ? "UNSUPPORTED" : "COMPLETED", summary,
+                    output: JsonSerializer.Serialize(facts, JsonOptions));
             }
             if (parsed.CategoryId is not null)
                 AddEvent(workflow, "backend_validation", "COMPLETED", $"{ids.Length} recommendation(s) revalidated against current database data");
@@ -158,10 +248,15 @@ public sealed class RecommendationService(HttpClient client, IConfiguration conf
                 input: $"Category {parsed.CategoryId?.ToString() ?? "unknown"}; date {effectiveDate?.ToString() ?? "none"}",
                 output: $"Saved recommendation IDs: {string.Join(",", ids)}");
             await db.SaveChangesAsync(ct);
+            logger?.LogInformation("Recommendation completed Status={Status} CandidateCount={CandidateCount} CorrelationId={CorrelationId}",
+                workflow.Status, ids.Length, workflow.WorkflowId);
             return ToResponse(workflow);
         }
         catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
         {
+            logger?.LogWarning("Recommendation failure Stage={Stage} ExceptionType={ExceptionType} CorrelationId={CorrelationId}",
+                ex is JsonException ? "response_schema" : ex is TaskCanceledException ? "timeout" : ex is HttpRequestException ? "connection" : "validation_or_upstream",
+                ex.GetType().Name, workflow.WorkflowId);
             workflow.Status = "FAILED";
             AddEvent(workflow, "failed", "FAILED", "Recommendation processing failed",
                 error: ex is ApiException api ? api.Message : "Internal recommendation error");
@@ -182,6 +277,15 @@ public sealed class RecommendationService(HttpClient client, IConfiguration conf
     }
 
     public async Task<RecommendationResponse> ApproveAsync(Guid workflowId, ApproveRecommendationRequest request, int userId, CancellationToken ct)
+    {
+        try { return await ApproveValidatedAsync(workflowId, request, userId, ct); }
+        catch (DbUpdateException ex) when (ex.InnerException is PostgresException { SqlState: "40001" or "23505" })
+        { throw new ApiException(409, "Booking data changed during approval. Refresh the workflow and available slots."); }
+        catch (PostgresException ex) when (ex.SqlState == "40001")
+        { throw new ApiException(409, "Booking data changed during approval. Refresh the workflow and available slots."); }
+    }
+
+    private async Task<RecommendationResponse> ApproveValidatedAsync(Guid workflowId, ApproveRecommendationRequest request, int userId, CancellationToken ct)
     {
         if (request.LawyerId == Guid.Empty || request.CustomerId == Guid.Empty || request.SlotId == Guid.Empty)
             throw new ApiException(400, "Lawyer, customer, and appointment slot IDs are required.");
@@ -204,8 +308,9 @@ public sealed class RecommendationService(HttpClient client, IConfiguration conf
         var recommendations = JsonSerializer.Deserialize<List<Recommendation>>(workflow.RecommendationsJson, JsonOptions) ?? [];
         if (!recommendations.Any(r => r.LawyerId == request.LawyerId))
             throw new ApiException(400, "The selected lawyer was not recommended by this workflow.");
+        await availability.LockLawyerAsync(request.LawyerId, ct);
         var lawyerIsEligible = await db.Lawyers.AsNoTracking().AnyAsync(l => l.LawyerId == request.LawyerId && l.Status == "Active" &&
-            l.LawyerSpecializations.Any(s => s.SpecializationId == workflow.CategoryId), ct);
+            l.LawyerSpecializations.Count == 1 && l.LawyerSpecializations.Any(s => s.SpecializationId == workflow.CategoryId), ct);
         if (!lawyerIsEligible)
             throw new ApiException(409, "The selected lawyer is no longer eligible.");
         const string customerPrefix = "00000000-0000-0000-0000-";
@@ -216,12 +321,11 @@ public sealed class RecommendationService(HttpClient client, IConfiguration conf
             customerNumber is <= 0 or > int.MaxValue ||
             !await db.Users.AsNoTracking().AnyAsync(u => u.UserId == (int)customerNumber && u.Role == "Customer", ct))
             throw new ApiException(400, "Select an existing customer account.");
-        var slotIsEligible = await db.AvailabilitySlots.AsNoTracking().AnyAsync(s => s.SlotId == request.SlotId && !s.IsBooked &&
-            s.LawyerAvailability.LawyerId == request.LawyerId &&
-            s.LawyerAvailability.Date >= DateOnly.FromDateTime(DateTime.UtcNow) &&
-            (workflow.RequestedDate == null || s.LawyerAvailability.Date == workflow.RequestedDate), ct);
-        if (!slotIsEligible)
-            throw new ApiException(409, "The selected appointment slot is unavailable or does not match the requested date.");
+        var interval = await availability.ResolveSlotAsync(request.LawyerId, request.SlotId, ct);
+        var day = await availability.GetAsync(request.LawyerId, interval.Date, ct);
+        if ((workflow.RequestedDate is not null && interval.Date != workflow.RequestedDate) ||
+            !day.AvailableSlots.Any(s => s.Start == interval.Start && s.End == interval.End))
+            throw new ApiException(409, "Selected slot is no longer available.");
 
         // Human selection is explicit. The existing appointment service owns conflict checks and booking.
         AppointmentDetailsResponse booking;

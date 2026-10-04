@@ -29,7 +29,6 @@ public static class DemoLawyerSeeder
         ("Real Estate & Property Law", "Property law practitioner handling title matters, land ownership disputes, leases, conveyancing and boundary disputes."),
         ("Labour & Employment Law", "Employment law practitioner handling workplace agreements, termination disputes, disciplinary matters and labour proceedings."),
         ("Criminal Law", "Criminal law practitioner handling defence, bail matters, court representation and related proceedings."),
-        ("Family Law", "Family law practitioner handling divorce, maintenance, custody and matrimonial disputes."),
         ("Tax Law", "Tax law practitioner advising on tax disputes, assessments, compliance matters and revenue appeals.")
     ];
 
@@ -37,11 +36,6 @@ public static class DemoLawyerSeeder
     [
         "LL.B, Attorney-at-Law", "LL.B (Hons), Attorney-at-Law",
         "Attorney-at-Law", "LL.M, Attorney-at-Law"
-    ];
-
-    private static readonly int[][] AvailabilityOffsets =
-    [
-        [3, 6, 10], [3, 7, 11], [3, 8, 12], [4, 6, 11], [4, 7, 10]
     ];
 
     private static readonly Dictionary<string, (string Name, string Description)[]> ServiceTemplates = new(StringComparer.OrdinalIgnoreCase)
@@ -77,14 +71,6 @@ public static class DemoLawyerSeeder
             ("Workplace Dispute Assistance", "Advice on workplace grievances, disciplinary processes and dispute resolution."),
             ("Labour Tribunal Consultation", "Assessment of labour tribunal claims and preparation requirements."),
             ("Employment Compliance Advisory", "Advice on employment policies, statutory duties and workplace compliance.")
-        ],
-        ["Family Law"] =
-        [
-            ("Divorce Consultation", "Advice on divorce procedure, required documents and related family matters."),
-            ("Child Custody Consultation", "Advice on custody arrangements and child-focused legal considerations."),
-            ("Maintenance & Alimony Advice", "Assessment of maintenance obligations and available applications."),
-            ("Matrimonial Dispute Assistance", "Guidance on legal options for matrimonial and domestic disputes."),
-            ("Family Settlement Consultation", "Advice on negotiated arrangements and family settlement documentation.")
         ],
         ["Tax Law"] =
         [
@@ -281,54 +267,78 @@ public static class DemoLawyerSeeder
         }
         await db.SaveChangesAsync(ct);
 
-        var dates = AvailabilityOffsets.SelectMany(offsets => offsets)
-            .Distinct().Select(offset => today.AddDays(offset)).ToArray();
-        var availabilities = await db.LawyerAvailabilities
-            .Include(a => a.AvailabilitySlots)
-            .Where(a => lawyerIds.Contains(a.LawyerId) && dates.Contains(a.Date))
-            .ToListAsync(ct);
-        var addedAvailabilities = 0;
-        var addedSlots = 0;
-        for (var i = 0; i < lawyerIds.Count; i++)
-        {
-            if (seededLawyers[i].Status != "Active") continue;
-            var startTime = new TimeOnly(9 + i % 3, 0);
-            var endTime = startTime.AddHours(1);
-            foreach (var offset in AvailabilityOffsets[i % AvailabilityOffsets.Length])
-            {
-                var date = today.AddDays(offset);
-                var availability = availabilities.FirstOrDefault(a => a.LawyerId == lawyerIds[i] && a.Date == date &&
-                    a.StartTime == startTime && a.EndTime == endTime);
-                if (availability is null)
-                {
-                    availability = new LawyerAvailability
-                    {
-                        AvailabilityId = Guid.NewGuid(), LawyerId = lawyerIds[i], Date = date,
-                        StartTime = startTime, EndTime = endTime
-                    };
-                    db.LawyerAvailabilities.Add(availability);
-                    availabilities.Add(availability);
-                    addedAvailabilities++;
-                }
-                foreach (var start in new[] { startTime, startTime.AddMinutes(30) })
-                {
-                    if (availability.AvailabilitySlots.Any(s => s.StartTime == start)) continue;
-                    availability.AvailabilitySlots.Add(new AvailabilitySlot
-                    {
-                        SlotId = Guid.NewGuid(), AvailabilityId = availability.AvailabilityId,
-                        StartTime = start, EndTime = start.AddMinutes(30), IsBooked = false
-                    });
-                    addedSlots++;
-                }
-            }
-        }
-        await db.SaveChangesAsync(ct);
+        var (addedAvailabilities, addedSlots) = await SeedSchedulingAsync(db, seededLawyers, customer.UserId, today, ct);
         if (transaction is not null) await transaction.CommitAsync(ct);
 
         // Appointment.CustomerId is a UUID even though User.UserId is an int. The existing
         // appointment service resolves a zero-prefixed UUID's final hexadecimal digits to UserId.
         var customerId = Guid.Parse($"00000000-0000-0000-0000-{customer.UserId:x12}");
         return new DemoSeedResult(created, servicesCreated, addedAvailabilities, addedSlots, customerCreated, customerId);
+    }
+
+    public static async Task<(int Windows, int Slots)> SeedExistingSchedulesAsync(ApplicationDbContext db, DateOnly today, CancellationToken ct = default)
+    {
+        var emails = Enumerable.Range(1, Names.Length).Select(LawyerEmail).ToArray();
+        var lawyers = await db.Lawyers.Where(l => l.Email != null && emails.Contains(l.Email) && l.LicenseNumber.StartsWith("ILS/LAW/")).OrderBy(l => l.LicenseNumber).ToListAsync(ct);
+        var recognized = lawyers.Where(l => Enumerable.Range(1, Names.Length).Any(n => l.Email == LawyerEmail(n) && l.LicenseNumber == LawyerLicense(n))).ToList();
+        if (recognized.Count < 4) throw new InvalidOperationException("At least four recognized synthetic demo profiles are required; existing profiles were not changed.");
+        var customer = await db.Users.SingleOrDefaultAsync(u => u.Email == CustomerEmail && u.Role == "Customer", ct)
+            ?? throw new InvalidOperationException("A demo Customer is required; accounts were not changed.");
+        await using var transaction = db.Database.IsRelational() ? await db.Database.BeginTransactionAsync(ct) : null;
+        var result = await SeedSchedulingAsync(db, recognized, customer.UserId, today, ct);
+        if (transaction is not null) await transaction.CommitAsync(ct);
+        return result;
+    }
+
+    private static async Task<(int Windows, int Slots)> SeedSchedulingAsync(ApplicationDbContext db, IReadOnlyList<Lawyer> seededLawyers, int customerUserId, DateOnly today, CancellationToken ct)
+    {
+        var lawyerIds = seededLawyers.Select(l => l.LawyerId).ToArray();
+        // Only untouched migration-generated rows for synthetic demo lawyers are initialized.
+        // Admin-edited schedules and appointment intervals are preserved.
+        var existingSchedules = await db.LawyerWorkingSchedules.Where(r => lawyerIds.Contains(r.LawyerId)).ToListAsync(ct);
+        foreach (var lawyer in seededLawyers)
+            foreach (var day in Enumerable.Range(0, 7)) {
+                var row = existingSchedules.SingleOrDefault(r => r.LawyerId == lawyer.LawyerId && (int)r.DayOfWeek == day);
+                var migratedId = Guid.Parse(Convert.ToHexString(System.Security.Cryptography.MD5.HashData(System.Text.Encoding.UTF8.GetBytes($"{lawyer.LawyerId}:working:{day}"))));
+                if (row is not null && (row.Id != migratedId || row.UpdatedAt is not null)) continue;
+                if (row is null) { row = new() { LawyerId = lawyer.LawyerId, DayOfWeek = (DayOfWeek)day }; db.LawyerWorkingSchedules.Add(row); }
+                row.IsWorkingDay = day is >= 1 and <= 5; row.StartTime = new(9, 0); row.EndTime = new(17, 0); row.UpdatedAt = DateTime.UtcNow;
+            }
+        await db.SaveChangesAsync(ct);
+        var demoDate = today.AddDays(3);
+        while (demoDate.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday) demoDate = demoDate.AddDays(1);
+        var addedAvailabilities = 0; var addedSlots = 0;
+        var customerId = Guid.Parse($"00000000-0000-0000-0000-{customerUserId:x12}");
+        // Marker reasons/descriptions make repeat runs safe, even after the date moves on.
+        for (var scenario = 0; scenario < 4; scenario++)
+        {
+            var lawyer = seededLawyers[scenario];
+            await new LegalService.API.Services.Scheduling.AvailabilityService(db).LockLawyerAsync(lawyer.LawyerId, ct); var marker = $"[Scheduling demo {scenario} {demoDate:yyyy-MM-dd}]";
+            if (scenario < 2) {
+                if (await db.LawyerUnavailabilities.AnyAsync(r => r.LawyerId == lawyer.LawyerId && r.Reason.StartsWith(marker), ct)) continue;
+                var start = demoDate.ToDateTime(scenario == 0 ? TimeOnly.MinValue : new TimeOnly(9, 0));
+                var end = scenario == 0 ? demoDate.AddDays(1).ToDateTime(TimeOnly.MinValue) : demoDate.ToDateTime(new(13, 0));
+                var conflicts = await db.Appointments.Where(a => a.LawyerId == lawyer.LawyerId && a.Status != "Cancelled" && a.Status != "Rejected" && a.AvailabilitySlot.LawyerAvailability.Date == demoDate)
+                    .Select(a => new { a.AvailabilitySlot.StartTime, a.AvailabilitySlot.EndTime }).ToListAsync(ct);
+                if (conflicts.Any(a => LegalService.API.Services.Scheduling.AvailabilityService.Overlaps(start, end, demoDate.ToDateTime(a.StartTime), demoDate.ToDateTime(a.EndTime)))) continue;
+                db.LawyerUnavailabilities.Add(new() { LawyerId = lawyer.LawyerId, StartDateTime = start, EndDateTime = end,
+                    Reason = marker + (scenario == 0 ? " Annual Leave" : " Court Appearance"), IsFullDay = scenario == 0 });
+            } else {
+                if (await db.Appointments.AnyAsync(a => a.LawyerId == lawyer.LawyerId && a.Description != null && a.Description.StartsWith(marker), ct)) continue;
+                var scheduling = new LegalService.API.Services.Scheduling.AvailabilityService(db);
+                var available = await scheduling.GetAsync(lawyer.LawyerId, demoDate, ct);
+                var candidates = scenario == 2 ? available.AvailableSlots.Take(1) : available.AvailableSlots;
+                foreach (var slot in candidates) {
+                    var window = new LawyerAvailability { AvailabilityId = Guid.NewGuid(), LawyerId = lawyer.LawyerId, Date = demoDate, StartTime = slot.Start, EndTime = slot.End };
+                    var stored = new AvailabilitySlot { SlotId = Guid.NewGuid(), LawyerAvailability = window, StartTime = slot.Start, EndTime = slot.End, IsBooked = true };
+                    db.Appointments.Add(new() { AppointmentId = Guid.NewGuid(), LawyerId = lawyer.LawyerId, CustomerId = customerId,
+                        AvailabilitySlot = stored, Status = "Confirmed", Description = marker + " Development scheduling demonstration", CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow });
+                    addedAvailabilities++; addedSlots++;
+                }
+            }
+            await db.SaveChangesAsync(ct);
+        }
+        return (addedAvailabilities, addedSlots);
     }
 
     public static async Task<DemoDataReport> ReportAsync(ApplicationDbContext db, CancellationToken ct = default)
@@ -360,15 +370,15 @@ public static class DemoLawyerSeeder
             services.Where(service => service.Category.Equals(area.Name, StringComparison.OrdinalIgnoreCase))
                 .Select(service => service.ServiceName).OrderBy(name => name).ToArray()
         )).ToArray();
+        var capacity = await new LegalService.API.Services.Scheduling.AvailabilityService(db).CapacityAsync(30, ct);
         return new DemoDataReport(
             lawyerStatuses.Count, lawyerStatuses.Count(status => status == "Active"),
             lawyerStatuses.Count(status => status == "Inactive"),
             lawyerStatuses.Count(status => status != "Active" && status != "Inactive"), demoLawyers.Count,
             demoLawyers.Count(lawyer => lawyer.Status == "Active"),
             demoLawyers.Count(lawyer => lawyer.Status != "Active"),
-            services.Count, availability.Count, slots.Count(slot => !slot.IsBooked && futureWindowIds.Contains(slot.AvailabilityId)),
-            demoWindowIds.Count, slots.Count(slot => !slot.IsBooked && futureWindowIds.Contains(slot.AvailabilityId) &&
-                demoWindowIds.Contains(slot.AvailabilityId)),
+            services.Count, availability.Count, capacity.Values.Sum(),
+            demoWindowIds.Count, demoLawyers.Sum(l => capacity.GetValueOrDefault(l.LawyerId)),
             await db.Users.CountAsync(user => user.Email == CustomerEmail && user.Role == "Customer", ct),
             await db.LawyerLegalServices.CountAsync(ct), areas);
     }

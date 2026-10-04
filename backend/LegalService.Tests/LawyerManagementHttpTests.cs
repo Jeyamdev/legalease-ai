@@ -1,3 +1,4 @@
+using LegalService.API.Services.Scheduling;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
@@ -10,6 +11,8 @@ using LegalService.API.DTOs.Requests;
 using LegalService.API.Interfaces;
 using LegalService.API.Models.Entities;
 using LegalService.API.Services;
+using LegalService.API.Services.Lawyers;
+using LegalService.API.Infrastructure;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
@@ -43,14 +46,30 @@ public sealed class LawyerManagementHttpTests : IAsyncLifetime
         builder.WebHost.UseUrls("http://127.0.0.1:0");
         builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?>
         {
+            ["Ai:BaseUrl"] = "http://test.invalid/", ["Ai:InternalKey"] = "test-only-key",
             ["Jwt:Key"] = Key, ["Jwt:Issuer"] = "member1-tests", ["Jwt:Audience"] = "member1-tests", ["Jwt:ExpiryMinutes"] = "10"
         });
         builder.Services.AddControllers().AddApplicationPart(typeof(LawyersController).Assembly);
         var databaseName = Guid.NewGuid().ToString();
         builder.Services.AddDbContext<ApplicationDbContext>(o => o.UseInMemoryDatabase(databaseName));
+        builder.Services.AddScoped<AvailabilityService>();
+        builder.Services.AddScoped<LawyerScheduleService>();
         builder.Services.AddScoped<IAppointmentService, AppointmentService>();
+        builder.Services.AddScoped<ICareerService, CareerService>();
+        builder.Services.AddSingleton(TimeProvider.System);
+        builder.Services.Configure<LegalService.API.Services.Workforce.WorkforceOptions>(_ => { });
+        builder.Services.AddScoped<LegalService.API.Services.Workforce.WorkforceAnalysisService>();
+        builder.Services.AddScoped<LegalService.API.Services.Workforce.WorkforceSettingsService>();
+        builder.Services.AddHttpClient<LegalService.API.Services.Workforce.HiringSuggestionService>()
+            .ConfigurePrimaryHttpMessageHandler(() => new WorkforceHttpDraft());
         builder.Services.AddScoped<IPasswordService, PasswordService>();
         builder.Services.AddScoped<JwtService>();
+        builder.Services.AddExceptionHandler<ApiExceptionHandler>();
+        builder.Services.AddProblemDetails();
+        builder.Services.AddHttpClient<ILawyerRecommendationService, RecommendationService>()
+            .ConfigurePrimaryHttpMessageHandler(() => new TestMatcher(request => new RecommendationResponse(
+                [new Recommendation(_lawyerId, 25, "External interpretation fixture")], [], [],
+                new ParsedLegalRequirement(request.Requirement, _specId, "Property", null, null, []), request.Date)));
         builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJwtBearer(o =>
             o.TokenValidationParameters = new TokenValidationParameters
             {
@@ -60,8 +79,10 @@ public sealed class LawyerManagementHttpTests : IAsyncLifetime
             });
         builder.Services.AddAuthorization();
         _app = builder.Build();
+        _app.UseExceptionHandler();
         _app.UseAuthentication();
         _app.UseAuthorization();
+        LegalService.API.Services.Workforce.WorkforceDemoEndpoints.MapWorkforceDemoEndpoints(_app);
         _app.MapControllers();
         await _app.StartAsync();
         var address = _app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single();
@@ -78,6 +99,7 @@ public sealed class LawyerManagementHttpTests : IAsyncLifetime
             LawyerId = _lawyerId, Name = "Original", Email = user.Email, LicenseNumber = "BAR-1", Status = "Active",
             LawyerSpecializations = [new LawyerSpecialization { Specialization = spec }]
         });
+        db.LawyerWorkingSchedules.Add(new() { LawyerId = _lawyerId, DayOfWeek = _date.DayOfWeek, IsWorkingDay = true, StartTime = new(9, 0), EndTime = new(9, 30) });
         db.LegalServices.Add(new() { ServiceName = "Property consultation", Category = "Property", Description = "Recorded service description" });
         db.LawyerAvailabilities.Add(new LawyerAvailability
         {
@@ -89,6 +111,68 @@ public sealed class LawyerManagementHttpTests : IAsyncLifetime
         _specId = spec.SpecializationId; _otherSpecId = other.SpecializationId; _userId = user.UserId;
     }
 
+    private sealed class WorkforceHttpDraft : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+        { Content = JsonContent.Create(new { suggestedTitle = "Property Associate", operationalReason = "Recorded future capacity requires review.", summary = "Support Property matters.", responsibilities = new[] { "Assist with Property matters." }, focusAreas = new[] { "Property" } }) });
+    }
+
+    [Theory] [InlineData(null, 401)] [InlineData("Customer", 403)] [InlineData("Lawyer", 403)] [InlineData("Clerk", 403)]
+    public async Task WorkforceAndCareerWritesRequireAdmin(string? role, int status)
+    {
+        SignIn(role); var id = Guid.NewGuid();
+        Assert.Equal(status, (int)(await _client.GetAsync("/api/workforce-settings")).StatusCode);
+        Assert.Equal(status, (int)(await _client.PutAsJsonAsync($"/api/workforce-settings/{_specId}", new { })).StatusCode);
+        Assert.Equal(status, (int)(await _client.DeleteAsync($"/api/workforce-settings/{_specId}")).StatusCode);
+        Assert.Equal(status, (int)(await _client.GetAsync("/api/workforce-analysis")).StatusCode);
+        Assert.Equal(status, (int)(await _client.PostAsJsonAsync("/api/workforce-analysis/suggestions", new { practiceAreaId = _specId })).StatusCode);
+        Assert.Equal(status, (int)(await _client.GetAsync($"/api/workforce-analysis/suggestions/{id}")).StatusCode);
+        Assert.Equal(status, (int)(await _client.PutAsJsonAsync($"/api/workforce-analysis/suggestions/{id}/draft", new { })).StatusCode);
+        Assert.Equal(status, (int)(await _client.PostAsJsonAsync($"/api/workforce-analysis/suggestions/{id}/approve", new { })).StatusCode);
+        Assert.Equal(status, (int)(await _client.PostAsJsonAsync($"/api/workforce-analysis/suggestions/{id}/dismiss", new { })).StatusCode);
+        Assert.Equal(status, (int)(await _client.PostAsJsonAsync("/api/careers", new { jobTitle = "Role", description = "Recorded" })).StatusCode);
+        Assert.Equal(status, (int)(await _client.PutAsJsonAsync("/api/careers/1", new { jobTitle = "Role", description = "Recorded" })).StatusCode);
+        Assert.Equal(status, (int)(await _client.DeleteAsync("/api/careers/1")).StatusCode);
+    }
+    [Fact] public async Task WorkforceHttpApprovalCreatesNormalCareerAndRejectsDuplicateAndInjectedMetrics()
+    {
+        SignIn("Admin");
+        Assert.Equal(HttpStatusCode.BadRequest, (await _client.PostAsJsonAsync("/api/workforce-analysis/suggestions", new { practiceAreaId = _specId, activeLawyerCount = 500 })).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await _client.GetAsync("/api/workforce-analysis")).StatusCode);
+        var response = await _client.PostAsJsonAsync("/api/workforce-analysis/suggestions", new { practiceAreaId = _specId });
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var workflow = await response.Content.ReadFromJsonAsync<LegalService.API.DTOs.Workforce.HiringWorkflowResponse>();
+        Assert.Equal("AWAITING_APPROVAL", workflow!.Status);
+        Assert.Empty(await _client.GetFromJsonAsync<LegalService.API.DTOs.Responses.CareerResponse[]>("/api/careers") ?? []);
+        var request = new { draft = workflow.Draft, jobTitle = "Admin Reviewed Property Associate", description = "Admin reviewed duties and conditions.", reviewedExistingCareers = true };
+        var approved = await _client.PostAsJsonAsync($"/api/workforce-analysis/suggestions/{workflow.WorkflowId}/approve", request);
+        Assert.Equal(HttpStatusCode.OK, approved.StatusCode);
+        var careers = await _client.GetFromJsonAsync<LegalService.API.DTOs.Responses.CareerResponse[]>("/api/careers");
+        Assert.Equal("Admin Reviewed Property Associate", Assert.Single(careers!).JobTitle);
+        Assert.Equal(HttpStatusCode.Conflict, (await _client.PostAsJsonAsync($"/api/workforce-analysis/suggestions/{workflow.WorkflowId}/approve", request)).StatusCode);
+        var restored = await _client.GetFromJsonAsync<LegalService.API.DTOs.Workforce.HiringWorkflowResponse>($"/api/workforce-analysis/suggestions/{workflow.WorkflowId}");
+        Assert.Equal("CAREER_OPENING_CREATED", restored!.Status);
+        Assert.Equal(HttpStatusCode.Conflict, (await _client.PostAsJsonAsync("/api/careers", new { jobTitle = "Duplicate", description = "Recorded", practiceAreaId = _specId })).StatusCode);
+    }
+
+    [Fact] public async Task WorkforceSettingsHttpValidatesPersistsAndRestoresDefaults()
+    {
+        SignIn("Admin");
+        var defaults = await _client.GetFromJsonAsync<LegalService.API.DTOs.Workforce.WorkforceSettingResponse>($"/api/workforce-settings/{_specId}"); Assert.Equal("DEFAULT", defaults!.Source);
+        Assert.Equal(HttpStatusCode.BadRequest, (await _client.PutAsJsonAsync($"/api/workforce-settings/{_specId}", new { minimumActiveLawyers = 4, targetActiveLawyers = 3, minimumFutureSlots = 12, highDemandThreshold = 10, watchCapacityRatio = .75 })).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await _client.PutAsJsonAsync($"/api/workforce-settings/{_specId}", new { watchCapacityRatio = .75 })).StatusCode);
+        var saved = await _client.PutAsJsonAsync($"/api/workforce-settings/{_specId}", new { minimumActiveLawyers = 4, targetActiveLawyers = 6, minimumFutureSlots = 12, highDemandThreshold = 10, watchCapacityRatio = .75 }); Assert.Equal(HttpStatusCode.OK, saved.StatusCode);
+        var custom = await saved.Content.ReadFromJsonAsync<LegalService.API.DTOs.Workforce.WorkforceSettingResponse>(); Assert.Equal("CUSTOM", custom!.Source); Assert.Equal(99, custom.UpdatedBy);
+        Assert.Equal(HttpStatusCode.OK, (await _client.DeleteAsync($"/api/workforce-settings/{_specId}")).StatusCode);
+        Assert.Equal("DEFAULT", (await _client.GetFromJsonAsync<LegalService.API.DTOs.Workforce.WorkforceSettingResponse>($"/api/workforce-settings/{_specId}"))!.Source);
+    }
+    [Fact] public async Task ProductionHostHasNoDemoRoutes()
+    {
+        SignIn("Admin");
+        Assert.Equal(HttpStatusCode.NotFound, (await _client.GetAsync("/api/dev/workforce-demo")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await _client.PostAsJsonAsync("/api/dev/workforce-demo/apply", new { scenario = "RECRUITMENT_NEEDED" })).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await _client.PostAsync("/api/dev/workforce-demo/reset", null)).StatusCode);
+    }
     private void SignIn(string? role)
     {
         _client.DefaultRequestHeaders.Authorization = null;
@@ -206,6 +290,13 @@ public sealed class LawyerManagementHttpTests : IAsyncLifetime
         SignIn("Admin");
         Assert.Equal(HttpStatusCode.OK, (await _client.DeleteAsync($"/api/lawyers/{_lawyerId}")).StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await _client.GetAsync($"/api/lawyers/{_lawyerId}")).StatusCode);
+        using var scope = _app.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        Assert.False(await db.Lawyers.AnyAsync(l => l.LawyerId == _lawyerId));
+        Assert.False(await db.LawyerSpecializations.AnyAsync(s => s.LawyerId == _lawyerId));
+        Assert.False(await db.LawyerAvailabilities.AnyAsync(a => a.LawyerId == _lawyerId));
+        Assert.False(await db.AvailabilitySlots.AnyAsync());
+        Assert.NotNull(await db.Users.FindAsync(_userId));
     }
 
     [Fact]
@@ -252,6 +343,7 @@ public sealed class LawyerManagementHttpTests : IAsyncLifetime
                         LawyerId = id, SpecializationId = i <= 12 ? _specId : _otherSpecId
                     }]
                 });
+                if (i <= 6) db.LawyerWorkingSchedules.Add(new() { LawyerId = id, DayOfWeek = _date.DayOfWeek, IsWorkingDay = true, StartTime = new(11, 0), EndTime = new(11, 30) });
                 if (i <= 6)
                     db.LawyerAvailabilities.Add(new LawyerAvailability
                     {
@@ -468,7 +560,7 @@ public sealed class LawyerManagementHttpTests : IAsyncLifetime
         }
         var publicList = await _client.GetFromJsonAsync<JsonElement>("/api/legal-services");
         Assert.Equal(JsonValueKind.Array, publicList.ValueKind);
-        Assert.Equal(0, publicList[0].GetProperty("lawyerCount").GetInt32());
+        Assert.Equal(1, publicList[0].GetProperty("lawyerCount").GetInt32());
         Assert.False(publicList[0].TryGetProperty("eligibleLawyerCount", out _));
         var serviceId = publicList[0].GetProperty("legalServiceId").GetInt32();
 
@@ -501,7 +593,7 @@ public sealed class LawyerManagementHttpTests : IAsyncLifetime
         Assert.Equal(otherId, details.GetProperty("eligibleLawyers")[0].GetProperty("lawyerId").GetGuid());
         Assert.Equal(1, details.GetProperty("legacyReferenceCount").GetInt32());
         var profile = await _client.GetFromJsonAsync<JsonElement>($"/api/lawyers/{_lawyerId}");
-        Assert.Equal("Property consultation", profile.GetProperty("legalServices")[0].GetProperty("serviceName").GetString());
+        Assert.Empty(profile.GetProperty("legalServices").EnumerateArray());
 
         var createArea = await _client.PostAsJsonAsync("/api/specializations",
             new { name = "Empty Practice Area", description = "No registered lawyers" });
@@ -557,21 +649,30 @@ public sealed class LawyerManagementHttpTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task ProfileIncludesOnlyRecordedLegalServices()
+    public async Task ProfileServicesFollowPracticeAreaAndIgnoreUnrelatedLegacyLinks()
     {
         using var scope = _app.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
         var service = await db.LegalServices.SingleAsync();
-        db.LawyerLegalServices.Add(new LawyerLegalService { LawyerId = _lawyerId, LegalServiceId = service.LegalServiceId });
+        var unrelated = new LegalService.API.Models.Entities.LegalService { ServiceName = "Employment consultation", Category = "Employment" };
+        db.LegalServices.Add(unrelated);
+        await db.SaveChangesAsync();
+        db.LawyerLegalServices.Add(new LawyerLegalService { LawyerId = _lawyerId, LegalServiceId = unrelated.LegalServiceId });
         await db.SaveChangesAsync();
         var profile = await _client.GetFromJsonAsync<JsonElement>($"/api/lawyers/{_lawyerId}");
+        Assert.Single(profile.GetProperty("legalServices").EnumerateArray());
         Assert.Equal(service.ServiceName, profile.GetProperty("legalServices")[0].GetProperty("serviceName").GetString());
         Assert.False(profile.TryGetProperty("passwordHash", out _));
+        var catalog = await _client.GetFromJsonAsync<JsonElement>("/api/legal-services");
+        Assert.Equal(1, catalog.EnumerateArray().Single(s => s.GetProperty("legalServiceId").GetInt32() == service.LegalServiceId).GetProperty("lawyerCount").GetInt32());
+        Assert.Equal(0, catalog.EnumerateArray().Single(s => s.GetProperty("legalServiceId").GetInt32() == unrelated.LegalServiceId).GetProperty("lawyerCount").GetInt32());
     }
 
     [Theory]
     [InlineData(null, 401)]
     [InlineData("Customer", 403)]
+    [InlineData("Lawyer", 403)]
+    [InlineData("Clerk", 403)]
     public async Task DedicatedRecommendationsRemainAdminAssisted(string? role, int status)
     {
         SignIn(role);
@@ -622,7 +723,7 @@ public sealed class LawyerManagementHttpTests : IAsyncLifetime
         var property = rows.Single(row => row.GetProperty("practiceAreaName").GetString() == "Property");
         Assert.Equal(1, property.GetProperty("activeLawyers").GetInt32());
         Assert.Equal(1, property.GetProperty("legalServices").GetInt32());
-        Assert.Equal(1, property.GetProperty("futureAvailabilityCount").GetInt32());
+        Assert.InRange(property.GetProperty("futureAvailabilityCount").GetInt32(), 4, 5);
         var employment = rows.Single(row => row.GetProperty("practiceAreaName").GetString() == "Employment");
         Assert.Equal(0, employment.GetProperty("activeLawyers").GetInt32());
         Assert.Equal(0, employment.GetProperty("legalServices").GetInt32());
@@ -631,15 +732,16 @@ public sealed class LawyerManagementHttpTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task FreshEfCatalogBootstrapPreservesDemoCategoriesAndLaterAdminChanges()
+    public async Task FreshEfCatalogBootstrapHasOnlyFiveSupportedAreasAndPreservesLaterAdminChanges()
     {
         await using var db = new ApplicationDbContext(new DbContextOptionsBuilder<ApplicationDbContext>()
             .UseInMemoryDatabase(Guid.NewGuid().ToString()).Options);
         await db.Database.EnsureCreatedAsync();
         await DbInitializer.SeedCategoriesAsync(db);
-        Assert.Equal(6, await db.Specializations.CountAsync());
+        Assert.Equal(5, await db.Specializations.CountAsync());
         Assert.True(await db.Specializations.AnyAsync(s => s.Name == "Corporate & Commercial Law"));
-        Assert.True(await db.Specializations.AnyAsync(s => s.Name == "Family Law"));
+        Assert.False(await db.Specializations.AnyAsync(s => s.Name == "Family Law"));
+        Assert.False(await db.LegalServices.AnyAsync(s => s.Category == "Family Law"));
         Assert.Equal("Corporate & Commercial Law", (await db.LegalServices.FindAsync(3))!.Category);
         var tax = await db.Specializations.SingleAsync(s => s.Name == "Tax Law");
         db.Specializations.Remove(tax);
@@ -649,6 +751,121 @@ public sealed class LawyerManagementHttpTests : IAsyncLifetime
         await DbInitializer.SeedCategoriesAsync(db);
         Assert.False(await db.Specializations.AnyAsync(s => s.Name == "Tax Law"));
         Assert.Equal("Admin-authored description", property.Description);
+    }
+
+    [Fact]
+    public async Task StatusFilterIsValidatedAndInvalidEmailCannotBeSaved()
+    {
+        var active = await _client.GetFromJsonAsync<JsonElement>("/api/lawyers/search?page=1&pageSize=10&status=Active");
+        Assert.Equal(1, active.GetProperty("totalItems").GetInt32());
+        var inactive = await _client.GetFromJsonAsync<JsonElement>("/api/lawyers/search?page=1&pageSize=10&status=Inactive");
+        Assert.Empty(inactive.GetProperty("items").EnumerateArray());
+        Assert.Equal(HttpStatusCode.BadRequest, (await _client.GetAsync("/api/lawyers?status=injected")).StatusCode);
+        SignIn("Admin"); var payload = Payload(); payload.Email = "not-an-email";
+        Assert.Equal(HttpStatusCode.BadRequest, (await _client.PutAsJsonAsync($"/api/lawyers/{_lawyerId}", payload)).StatusCode);
+    }
+
+    [Fact]
+    public async Task AmbiguousPracticeAreaRecordsCannotBecomeEligibleThroughLegacyLinks()
+    {
+        SignIn("Admin");
+        using var scope = _app.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        db.LawyerSpecializations.Add(new() { LawyerId = _lawyerId, SpecializationId = _otherSpecId });
+        var service = await db.LegalServices.SingleAsync();
+        db.LawyerLegalServices.Add(new() { LawyerId = _lawyerId, LegalServiceId = service.LegalServiceId });
+        await db.SaveChangesAsync();
+        var details = await _client.GetFromJsonAsync<JsonElement>($"/api/legal-services/{service.LegalServiceId}");
+        Assert.Equal(0, details.GetProperty("eligibleLawyerCount").GetInt32());
+        Assert.Empty(details.GetProperty("eligibleLawyers").EnumerateArray());
+        // The ordinary Admin update repairs the legacy ambiguity to exactly one selected area.
+        Assert.Equal(HttpStatusCode.OK, (await _client.PutAsJsonAsync($"/api/lawyers/{_lawyerId}", Payload())).StatusCode);
+        db.ChangeTracker.Clear();
+        Assert.Single(await db.LawyerSpecializations.Where(link => link.LawyerId == _lawyerId).ToListAsync());
+    }
+
+    private sealed class TestMatcher(Func<RecommendationRequest, RecommendationResponse> respond) : HttpMessageHandler
+    {
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            var input = await request.Content!.ReadFromJsonAsync<RecommendationRequest>(cancellationToken: ct);
+            return new(HttpStatusCode.OK) { Content = JsonContent.Create(respond(input!)) };
+        }
+    }
+
+    [Theory]
+    [InlineData(true)] [InlineData(false)]
+    public async Task HttpWorkflowRestoresByIdCompletesAndRejectsDuplicateApproval(bool preferredDate)
+    {
+        SignIn("Admin");
+        using var scope = _app.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        db.Users.Add(new() { UserId = 42, Name = "Test Customer", Email = "customer@example.test", Role = "Customer" });
+        await db.SaveChangesAsync();
+        var response = await _client.PostAsJsonAsync("/api/lawyer-recommendations", new
+        {
+            requirement = "Land ownership dispute", date = preferredDate ? _date : (DateOnly?)null
+        });
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var prepared = await response.Content.ReadFromJsonAsync<RecommendationResponse>();
+        Assert.Equal("AWAITING_APPROVAL", prepared!.Status);
+        Assert.Empty(db.Appointments);
+        var id = prepared.WorkflowId!.Value;
+        for (var refresh = 0; refresh < 2; refresh++)
+        {
+            var restored = await _client.GetFromJsonAsync<RecommendationResponse>($"/api/lawyer-recommendations/{id}");
+            Assert.Equal(id, restored!.WorkflowId); Assert.Equal("AWAITING_APPROVAL", restored.Status);
+        }
+        Assert.Equal(1, await db.LawyerRecommendationWorkflows.CountAsync());
+        var recordedSlots = await _client.GetFromJsonAsync<List<LegalService.API.DTOs.Appointments.AvailabilitySlotResponse>>($"/api/lawyers/{_lawyerId}/availability?date={_date:yyyy-MM-dd}");
+        var slot = Assert.Single(recordedSlots!);
+        var selection = new { lawyerId = _lawyerId, customerId = Guid.Parse("00000000-0000-0000-0000-00000000002a"), slotId = slot.SlotId };
+        var approval = await _client.PostAsJsonAsync($"/api/lawyer-recommendations/{id}/approve", selection);
+        Assert.Equal(HttpStatusCode.OK, approval.StatusCode);
+        var completed = await approval.Content.ReadFromJsonAsync<RecommendationResponse>();
+        Assert.Equal("ACTION_COMPLETED", completed!.Status); Assert.NotNull(completed.AppointmentId);
+        var completedRestored = await _client.GetFromJsonAsync<RecommendationResponse>($"/api/lawyer-recommendations/{id}");
+        Assert.Equal(completed.AppointmentId, completedRestored!.AppointmentId);
+        Assert.Equal("ACTION_COMPLETED", completedRestored.Status);
+        Assert.Equal(HttpStatusCode.Conflict, (await _client.PostAsJsonAsync($"/api/lawyer-recommendations/{id}/approve", selection)).StatusCode);
+        Assert.Equal(1, await db.Appointments.CountAsync());
+    }
+
+    [Theory] [InlineData(null, 401)] [InlineData("Customer", 403)] [InlineData("Lawyer", 403)] [InlineData("Clerk", 403)]
+    public async Task WeeklyScheduleAndLeaveEndpointsEnforceAdminAuthorization(string? role, int status)
+    {
+        if (role is not null) SignIn(role);
+        var path = $"/api/lawyers/{_lawyerId}";
+        foreach (var response in new[] {
+            await _client.GetAsync(path + "/working-schedule"),
+            await _client.PutAsJsonAsync(path + "/working-schedule", new { }),
+            await _client.GetAsync(path + "/unavailability"),
+            await _client.PostAsJsonAsync(path + "/unavailability", new { }),
+            await _client.PutAsJsonAsync(path + $"/unavailability/{Guid.NewGuid()}", new { }),
+            await _client.DeleteAsync(path + $"/unavailability/{Guid.NewGuid()}") }) Assert.Equal(status, (int)response.StatusCode);
+    }
+
+    [Fact] public async Task ScheduleAndLeaveHttpCrudDerivesSlotsAndReturnsStructuredAppointmentConflict()
+    {
+        SignIn("Admin"); var path = $"/api/lawyers/{_lawyerId}";
+        var schedule = new LegalService.API.DTOs.Scheduling.ScheduleRequest { Days = Enumerable.Range(0, 7).Select(day => new LegalService.API.DTOs.Scheduling.WorkingDayDto((DayOfWeek)day, day == (int)_date.DayOfWeek, new(9, 0), new(10, 0))).ToList() };
+        Assert.Equal(HttpStatusCode.OK, (await _client.PutAsJsonAsync(path + "/working-schedule", schedule)).StatusCode);
+        var first = await _client.GetFromJsonAsync<LegalService.API.DTOs.Scheduling.AvailableSlotsResponse>(path + $"/available-slots?date={_date:yyyy-MM-dd}");
+        Assert.Equal(2, first!.AvailableSlots.Count);
+        Assert.Equal(HttpStatusCode.BadRequest, (await _client.GetAsync(path + "/available-slots")).StatusCode);
+        var payload = new LegalService.API.DTOs.Scheduling.UnavailabilityRequest { StartDateTime = _date.ToDateTime(new(9, 0)), EndDateTime = _date.ToDateTime(new(9, 30)), Reason = "Court" };
+        var added = await _client.PostAsJsonAsync(path + "/unavailability", payload); Assert.Equal(HttpStatusCode.OK, added.StatusCode);
+        var leave = (await added.Content.ReadFromJsonAsync<LegalService.API.DTOs.Scheduling.UnavailabilityResponse>())!;
+        Assert.Single((await _client.GetFromJsonAsync<LegalService.API.DTOs.Scheduling.AvailableSlotsResponse>(path + $"/available-slots?date={_date:yyyy-MM-dd}"))!.AvailableSlots);
+        payload.Reason = "Training"; Assert.Equal(HttpStatusCode.OK, (await _client.PutAsJsonAsync(path + $"/unavailability/{leave.Id}", payload)).StatusCode);
+        Assert.Equal(HttpStatusCode.NoContent, (await _client.DeleteAsync(path + $"/unavailability/{leave.Id}")).StatusCode);
+        using var scope = _app.Services.CreateScope(); var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        db.Users.Add(new() { UserId = 42, Name = "Customer", Email = "scheduling-customer@test.local", Role = "Customer" }); await db.SaveChangesAsync();
+        var booked = await _client.PostAsJsonAsync("/api/appointments", new { lawyerId = _lawyerId, customerId = Guid.Parse("00000000-0000-0000-0000-00000000002a"), slotId = first.AvailableSlots[0].SlotId });
+        Assert.Equal(HttpStatusCode.Created, booked.StatusCode);
+        var conflict = await _client.PostAsJsonAsync(path + "/unavailability", payload); Assert.Equal(HttpStatusCode.Conflict, conflict.StatusCode);
+        var details = await conflict.Content.ReadFromJsonAsync<JsonElement>(); Assert.Equal(1, details.GetProperty("conflicts").GetArrayLength()); Assert.Equal("2030-01-05", details.GetProperty("conflicts")[0].GetProperty("date").GetString());
+        var stale = await _client.PostAsJsonAsync("/api/appointments", new { lawyerId = _lawyerId, customerId = Guid.Parse("00000000-0000-0000-0000-00000000002a"), slotId = first.AvailableSlots[0].SlotId }); Assert.Equal(HttpStatusCode.Conflict, stale.StatusCode);
     }
 
     public async Task DisposeAsync()

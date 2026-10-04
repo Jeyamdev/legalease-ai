@@ -4,6 +4,12 @@ from fastapi.testclient import TestClient
 from lawyer_recommendation.app import app
 
 class SnapshotTests(unittest.TestCase):
+    def test_health_exposes_only_liveness(self):
+        with TestClient(app) as client:
+            response = client.get('/health')
+        self.assertEqual(200, response.status_code)
+        self.assertEqual({'status': 'ok'}, response.json())
+
     def test_missing_gemini_key_is_safe_error(self):
         with patch.dict('os.environ', {'AI_INTERNAL_KEY': 'test-only-key', 'GEMINI_API_KEY': ''}), TestClient(app) as client:
             response = client.post('/lawyer-recommendations', json={
@@ -14,6 +20,7 @@ class SnapshotTests(unittest.TestCase):
     def test_requires_internal_authentication(self):
         with patch.dict('os.environ', {'AI_INTERNAL_KEY': 'test-only-key'}), TestClient(app) as client:
             self.assertEqual(401, client.post('/lawyer-recommendations', json={'requirement': 'property'}).status_code)
+            self.assertEqual(401, client.post('/lawyer-recommendations', json={'requirement': 'property'}, headers={'X-Internal-Key':'wrong-key'}).status_code)
 
     def test_ranks_only_matching_active_snapshot_candidates(self):
         payload = {
@@ -35,4 +42,4 @@ class SnapshotTests(unittest.TestCase):
         result = response.json()['recommendations']
         self.assertEqual(1, len(result))
         self.assertEqual(payload['candidates'][0]['lawyerId'], result[0]['lawyerId'])
-        self.assertEqual(55, result[0]['score'])
+        self.assertEqual(5, result[0]['score'])

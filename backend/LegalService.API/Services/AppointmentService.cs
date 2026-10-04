@@ -5,6 +5,8 @@ using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using LegalService.API.Data;
+using LegalService.API.Services.Scheduling;
+using LegalService.API.Infrastructure;
 using LegalService.API.DTOs.Appointments;
 using LegalService.API.Interfaces;
 using LegalService.API.Models.Entities;
@@ -15,13 +17,15 @@ public class AppointmentService : IAppointmentService
 {
     private readonly ApplicationDbContext _context;
     private readonly ILogger<AppointmentService> _logger;
+    private readonly AvailabilityService availability;
 
     public AppointmentService(
         ApplicationDbContext context,
-        ILogger<AppointmentService> logger)
+        ILogger<AppointmentService> logger, AvailabilityService? scheduling = null)
     {
         _context = context;
         _logger = logger;
+        availability = scheduling ?? new AvailabilityService(context);
     }
 
     public async Task<AppointmentDetailsResponse> BookAppointmentAsync(BookAppointmentRequest request)
@@ -29,45 +33,18 @@ public class AppointmentService : IAppointmentService
         _logger.LogInformation("Attempting to book appointment. LawyerId: {LawyerId}, SlotId: {SlotId}, CustomerId: {CustomerId}",
             request.LawyerId, request.SlotId, request.CustomerId);
 
-        var slot = await _context.AvailabilitySlots
-            .Include(s => s.LawyerAvailability)
-            .FirstOrDefaultAsync(s => s.SlotId == request.SlotId);
-
-        if (slot == null)
-            throw new KeyNotFoundException($"Availability slot '{request.SlotId}' was not found.");
-
-        if (slot.LawyerAvailability.LawyerId != request.LawyerId)
-            throw new InvalidOperationException("The requested slot does not belong to the selected lawyer.");
-
-        if (slot.IsBooked)
-            throw new InvalidOperationException("The selected time slot is already booked. Please select an available slot.");
-
-        // Check if there is an active appointment already attached to this slot
-        var activeExistingAppointment = await _context.Appointments
-            .AnyAsync(a => a.SlotId == slot.SlotId && a.Status != "Cancelled" && a.Status != "Rejected");
-
-        if (activeExistingAppointment)
-            throw new InvalidOperationException("An active appointment is already scheduled for this slot.");
-
-        // Check for conflicting overlapping appointments for the lawyer on the same date
-        var conflict = await CheckConflictAsync(
-            request.LawyerId,
-            slot.LawyerAvailability.Date,
-            slot.StartTime,
-            slot.EndTime);
-
-        if (conflict.HasConflict)
-            throw new InvalidOperationException($"Scheduling conflict detected: {conflict.Reason}");
-
-        // Reserve the slot atomically
-        slot.IsBooked = true;
+        await using var transaction = await availability.BeginMutationAsync();
+        await availability.LockLawyerAsync(request.LawyerId);
+        await ValidateCustomerAsync(request.CustomerId);
+        var slot = await CreateBookingSnapshotAsync(request.LawyerId, request.SlotId);
 
         var appointment = new Appointment
         {
             AppointmentId = Guid.NewGuid(),
             CustomerId = request.CustomerId,
             LawyerId = request.LawyerId,
-            SlotId = request.SlotId,
+            SlotId = slot.SlotId,
+            AvailabilitySlot = slot,
             Status = "Requested",
             Description = request.Description ?? request.Notes,
             ConsultationType = string.IsNullOrWhiteSpace(request.ConsultationType) ? "Online" : request.ConsultationType,
@@ -88,6 +65,8 @@ public class AppointmentService : IAppointmentService
         await _context.Appointments.AddAsync(appointment);
         await _context.AppointmentStatusHistories.AddAsync(history);
         await _context.SaveChangesAsync();
+
+        if (transaction is not null) await transaction.CommitAsync();
 
         _logger.LogInformation("Appointment successfully booked with ID: {AppointmentId}", appointment.AppointmentId);
 
@@ -276,6 +255,10 @@ public class AppointmentService : IAppointmentService
         Guid newSlotId,
         string? reason)
     {
+        await using var transaction = await availability.BeginMutationAsync();
+        var lawyerId = await _context.Appointments.Where(a => a.AppointmentId == appointmentId).Select(a => (Guid?)a.LawyerId).SingleOrDefaultAsync();
+        if (lawyerId is null) return null;
+        await availability.LockLawyerAsync(lawyerId.Value);
         var appointment = await _context.Appointments
             .Include(a => a.AvailabilitySlot)
                 .ThenInclude(s => s.LawyerAvailability)
@@ -287,29 +270,7 @@ public class AppointmentService : IAppointmentService
         if (appointment.Status == "Completed" || appointment.Status == "Cancelled" || appointment.Status == "Rejected")
             throw new InvalidOperationException($"Cannot reschedule an appointment with status '{appointment.Status}'.");
 
-        var newSlot = await _context.AvailabilitySlots
-            .Include(s => s.LawyerAvailability)
-            .FirstOrDefaultAsync(s => s.SlotId == newSlotId);
-
-        if (newSlot == null)
-            throw new KeyNotFoundException($"New availability slot '{newSlotId}' was not found.");
-
-        if (newSlot.LawyerAvailability.LawyerId != appointment.LawyerId)
-            throw new InvalidOperationException("The requested slot does not belong to the appointment's lawyer.");
-
-        if (newSlot.IsBooked && newSlot.SlotId != appointment.SlotId)
-            throw new InvalidOperationException("The selected new slot is already booked.");
-
-        // Check conflicts excluding the current appointment
-        var conflict = await CheckConflictAsync(
-            appointment.LawyerId,
-            newSlot.LawyerAvailability.Date,
-            newSlot.StartTime,
-            newSlot.EndTime,
-            excludeAppointmentId: appointment.AppointmentId);
-
-        if (conflict.HasConflict)
-            throw new InvalidOperationException($"Conflict on new slot: {conflict.Reason}");
+        var newSlot = await CreateBookingSnapshotAsync(appointment.LawyerId, newSlotId, appointment.AppointmentId);
 
         // Release old slot
         if (appointment.AvailabilitySlot != null)
@@ -319,10 +280,11 @@ public class AppointmentService : IAppointmentService
 
         // Reserve new slot
         newSlot.IsBooked = true;
-        appointment.SlotId = newSlotId;
+        appointment.SlotId = newSlot.SlotId;
         appointment.AvailabilitySlot = newSlot;
 
         await ApplyStatusChangeAsync(appointment, "Rescheduled");
+        if (transaction is not null) await transaction.CommitAsync();
         return await MapToDetailsResponseAsync(appointment, newSlot);
     }
 
@@ -362,80 +324,37 @@ public class AppointmentService : IAppointmentService
 
     public async Task<IEnumerable<AvailabilitySlotResponse>> GetAvailableSlotsAsync(Guid lawyerId, DateOnly date)
     {
-        var slots = await _context.AvailabilitySlots
-            .Include(s => s.LawyerAvailability)
-            .Where(s => s.LawyerAvailability.LawyerId == lawyerId
-                     && s.LawyerAvailability.Date == date
-                     && !s.IsBooked)
-            .OrderBy(s => s.StartTime)
-            .ToListAsync();
-
-        if (slots.Count == 0)
-        {
-            var availabilityExists = await _context.LawyerAvailabilities
-                .AnyAsync(la => la.LawyerId == lawyerId && la.Date == date);
-
-            if (!availabilityExists)
-            {
-                var lawyer = await _context.Lawyers.FirstOrDefaultAsync(l => l.LawyerId == lawyerId);
-                if (lawyer != null)
-                {
-                    var availability = new LawyerAvailability
-                    {
-                        AvailabilityId = Guid.NewGuid(),
-                        LawyerId = lawyerId,
-                        Date = date,
-                        StartTime = new TimeOnly(15, 0),
-                        EndTime = new TimeOnly(17, 0)
-                    };
-
-                    var slotTimes = new (TimeOnly Start, TimeOnly End)[]
-                    {
-                        (new TimeOnly(15, 0), new TimeOnly(15, 30)),
-                        (new TimeOnly(15, 30), new TimeOnly(16, 0)),
-                        (new TimeOnly(16, 0), new TimeOnly(16, 30)),
-                        (new TimeOnly(16, 30), new TimeOnly(17, 0))
-                    };
-
-                    foreach (var st in slotTimes)
-                    {
-                        availability.AvailabilitySlots.Add(new AvailabilitySlot
-                        {
-                            SlotId = Guid.NewGuid(),
-                            AvailabilityId = availability.AvailabilityId,
-                            StartTime = st.Start,
-                            EndTime = st.End,
-                            IsBooked = false
-                        });
-                    }
-
-                    await _context.LawyerAvailabilities.AddAsync(availability);
-                    await _context.SaveChangesAsync();
-
-                    return availability.AvailabilitySlots
-                        .OrderBy(s => s.StartTime)
-                        .Select(s => new AvailabilitySlotResponse
-                        {
-                            SlotId = s.SlotId,
-                            AvailabilityId = s.AvailabilityId,
-                            Date = date,
-                            StartTime = s.StartTime,
-                            EndTime = s.EndTime,
-                            IsBooked = false
-                        });
-                }
-            }
-        }
-
-        return slots.Select(s => new AvailabilitySlotResponse
-        {
-            SlotId = s.SlotId,
-            AvailabilityId = s.AvailabilityId,
-            Date = s.LawyerAvailability.Date,
-            StartTime = s.StartTime,
-            EndTime = s.EndTime,
-            IsBooked = s.IsBooked
+        var result = await availability.GetAsync(lawyerId, date);
+        return result.AvailableSlots.Select(s => new AvailabilitySlotResponse {
+            SlotId = s.SlotId, Date = date, StartTime = s.Start, EndTime = s.End, IsBooked = false
         });
+    }
+
+    private async Task ValidateCustomerAsync(Guid customerId)
+    {
+        const string prefix = "00000000-0000-0000-0000-";
+        var text = customerId.ToString();
+        if (!text.StartsWith(prefix, StringComparison.Ordinal) ||
+            !long.TryParse(text[prefix.Length..], System.Globalization.NumberStyles.HexNumber,
+                System.Globalization.CultureInfo.InvariantCulture, out var number) || number is <= 0 or > int.MaxValue ||
+            !await _context.Users.AnyAsync(u => u.UserId == (int)number && u.Role == "Customer"))
+            throw new ApiException(400, "Select an existing customer account.");
+    }
+
+    private async Task<AvailabilitySlot> CreateBookingSnapshotAsync(Guid lawyerId, Guid selectedSlot, Guid? excludeAppointment = null)
+    {
+        var interval = await availability.ResolveSlotAsync(lawyerId, selectedSlot);
+        var snapshot = await availability.LoadAsync(interval.Date, interval.Date, [lawyerId]);
+        var day = snapshot.Day(lawyerId, interval.Date, excludeAppointment);
+        if (!day.AvailableSlots.Any(s => s.Start == interval.Start && s.End == interval.End))
+            throw new ApiException(409, "Selected slot is no longer available.");
+        // Only actual appointments persist timing snapshots. These records never generate availability.
+        var window = new LawyerAvailability { AvailabilityId = Guid.NewGuid(), LawyerId = lawyerId,
+            Date = interval.Date, StartTime = interval.Start, EndTime = interval.End };
+        var slot = new AvailabilitySlot { SlotId = Guid.NewGuid(), LawyerAvailability = window,
+            AvailabilityId = window.AvailabilityId, StartTime = interval.Start, EndTime = interval.End, IsBooked = true };
+        _context.AvailabilitySlots.Add(slot);
+        return slot;
     }
 
     public async Task<ConflictCheckResponse> CheckConflictAsync(

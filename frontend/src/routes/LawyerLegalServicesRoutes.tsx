@@ -4,6 +4,7 @@ import { LawyerLegalServicesLayout } from "../pages/admin/LawyerLegalServicesLay
 import { SpecializationsPage } from "../pages/admin/SpecializationsPage";
 import { LegalServicesPage } from "../pages/admin/LegalServicesPage";
 import { RecommendationsPage } from "../pages/admin/RecommendationsPage";
+import { AIOperationsPage } from "../features/lawyerServices/aiOperations/pages/AIOperationsPage";
 import { AdminRoute } from "./ProtectedRoutes";
 
 export const lawyerLegalServicesRoutes = <>
@@ -21,5 +22,6 @@ export const lawyerLegalServicesRoutes = <>
     <Route path="specializations" element={<SpecializationsPage />} />
     <Route path="legal-services" element={<LegalServicesPage />} />
     <Route path="recommendations" element={<RecommendationsPage />} />
+    <Route path="ai-operations" element={<AIOperationsPage />} />
   </Route>
 </>;

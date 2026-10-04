@@ -64,6 +64,7 @@ flutter:
   uses-material-design: true
 
   assets:
+    - .env
     - assets/
     - assets/sample_documents/
     - assets/careers/

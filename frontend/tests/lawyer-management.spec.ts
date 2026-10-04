@@ -52,22 +52,22 @@ test("Admin keeps one module with Lawyers, Practice Areas and Legal Services", a
   await page.goto("/admin/lawyer-services/lawyers");
   await expect(page.getByRole("heading", { name: "Lawyers", exact: true })).toBeVisible();
   await expect(page.getByText("Nimal Perera")).toBeVisible();
-  await expect(page.getByText("1 Active Lawyers").first()).toBeVisible();
+  await expect(page.getByRole("article", { name: "Active Lawyers", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Tax Law (0)" }).click();
   await expect(page.getByText("No lawyers found")).toBeVisible();
 
   await page.getByRole("link", { name: "Practice Areas" }).click();
   await expect(page).toHaveURL(/\/admin\/lawyer-services\/specializations$/);
-  await expect(page.getByRole("heading", { name: "Practice Area Management" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Practice Areas", exact: true })).toBeVisible();
 
   await page.getByRole("link", { name: "Legal Services", exact: true }).click();
   await expect(page).toHaveURL(/\/admin\/lawyer-services\/legal-services$/);
-  await expect(page.getByRole("heading", { name: "Legal Service Management" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Legal Services", exact: true })).toBeVisible();
   await expect(page.getByText("Contract Review")).toBeVisible();
   await expect(page.getByText("1 Lawyer")).toBeVisible();
   await page.getByRole("button", { name: "View", exact: true }).click();
   const details = page.getByRole("dialog", { name: "Contract Review" });
-  await expect(details.getByText("Eligible Practitioners")).toBeVisible();
+  await expect(details.getByText("Eligible Lawyers", { exact: false })).toBeVisible();
   await expect(details.getByText("Nimal Perera")).toBeVisible();
   await expect(details.getByText("Manage Assigned Lawyers")).toHaveCount(0);
 });

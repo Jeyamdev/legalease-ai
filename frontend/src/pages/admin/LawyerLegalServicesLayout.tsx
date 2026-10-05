@@ -10,8 +10,7 @@ const sections = [
   { label: "Lawyers", path: "lawyers" },
   { label: "Practice Areas", path: "specializations" },
   { label: "Legal Services", path: "legal-services" },
-  { label: "AI Recommendation", path: "recommendations" },
-  { label: "AI Operations", path: "ai-operations" },
+  { label: "Workforce & Hiring", path: "workforce-hiring" },
 ];
 
 export function OperationalSummary({ summary, loading, error, coverageOpen, onToggle, onRetry }: {
@@ -94,7 +93,7 @@ export function LawyerLegalServicesLayout() {
   return (
     <AdminLayout
       title="Lawyer & Legal Service Management"
-      subtitle="Manage practitioners, legal categories, services and AI recommendations"
+      subtitle="Manage practitioners, legal categories, services and workforce coverage"
       showStats={false}
       responsiveNavigation
     >

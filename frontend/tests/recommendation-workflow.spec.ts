@@ -1,10 +1,11 @@
+import { frontDeskFixture, selectIntakeClient } from './frontDeskFixture';
 import { expect, test, type Page } from "@playwright/test";
-const root = "/admin/lawyer-services/recommendations";
+const root = "/admin/lawyer-matching";
 const api = /^https?:\/\/[^/]+\/api\//;
 const date = "2030-01-07";
 const events = ["received", "parse_requirement", "validate_category", "search_lawyers", "rank_candidates", "validate_recommendations", "backend_validation"]
   .map(step => ({ step, status: "COMPLETED", timestamp: "2026-10-04T10:00:00Z", summary: "Public event", outputSummary: '{"candidateCount":2,"eligibleCount":2}' }));
-const result = { workflowId: "guided", status: "AWAITING_APPROVAL", userRequirement: "Property title review", date: date as string | null,
+const result = { clientId: 42, workflowId: "guided", status: "AWAITING_APPROVAL", userRequirement: "Property title review", date: date as string | null,
   parsedRequirement: { categoryId: 4, categoryName: "Real Estate & Property Law", legalServiceId: 91 as number | null, legalServiceName: "Title review" as string | null, matterSummary: "Review of a property title" },
   recommendations: [{ lawyerId: "lawyer-1", fullName: "Amaya Peiris", qualification: "Attorney-at-Law", yearsExperience: 12, score: 12, practiceArea: "Real Estate & Property Law", reason: "Correct Practice Area. 12 years recorded experience. Unbooked slot recorded on 2030-01-07." },
     { lawyerId: "lawyer-2", fullName: "Arun Selvaratnam", qualification: "Attorney-at-Law", yearsExperience: 8, score: 8, practiceArea: "Real Estate & Property Law", reason: "Correct Practice Area. 8 years recorded experience." }], warnings: [] as string[], trace: events };
@@ -30,6 +31,7 @@ async function setup(page: Page, options: FixtureOptions = {}) {
     if (new URL(route.request().url()).pathname.endsWith('/available-slots') && Array.isArray(body)) body = { date: new URL(route.request().url()).searchParams.get('date'), workingDay: true, appointmentDurationMinutes: 30, timeZone: 'Asia/Colombo', availableSlots: body.filter(slot => !slot.isBooked && slot.date === new URL(route.request().url()).searchParams.get('date')).map(slot => ({ slotId: slot.slotId, start: slot.startTime, end: slot.endTime })) };
     await route.fulfill({ json: body });
   });
+  await frontDeskFixture(page, () => options.result || result);
   return { get approvals() { return approvals; }, get submissions() { return submissions; }, searches, slotDates };
 }
 function stage(page: Page, label: string) { return page.getByRole("region", { name: "Recommendation workflow progress" }).locator("li").filter({ has: page.getByText(label, { exact: true }) }); }
@@ -39,7 +41,7 @@ test("ready input and real request progress do not invent intermediate completio
   const stats = await setup(page, { gate }); await page.goto(root);
   await expect(page.getByRole("button", { name: "Analyse Requirement", exact: true })).toBeVisible();
   await expect(page.getByRole("region", { name: "Recommendation workflow progress" })).toHaveCount(0);
-  await page.getByLabel("Legal requirement").fill("Property title review"); await page.getByRole("button", { name: "Analyse Requirement", exact: true }).click();
+  await selectIntakeClient(page); await page.getByLabel("Legal requirement").fill("Property title review"); await page.getByRole("button", { name: "Analyse Requirement", exact: true }).click();
   await expect(stage(page, "Requirement")).toHaveAttribute("data-state", "ACTIVE");
   await expect(stage(page, "Interpretation")).toHaveAttribute("data-state", "PENDING");
   await expect(page.getByText("0 of 9 stages complete")).toBeVisible();
@@ -90,7 +92,7 @@ test('submitted bank scam unsupported result finishes progress and preserves con
   await setup(page, { result: { ...result, status: 'UNSUPPORTED', userRequirement: requirement, recommendations: [],
     parsedRequirement: { ...result.parsedRequirement, categoryId: 0, categoryName: '', legalServiceId: null, legalServiceName: null,
       matterSummary: 'Legal assistance regarding a bank transaction scam issue.' }, trace: events.slice(0, 3) } });
-  await page.goto(root); await page.getByLabel('Legal requirement').fill(requirement);
+  await page.goto(root); await selectIntakeClient(page); await page.getByLabel('Legal requirement').fill(requirement);
   await page.getByRole('button', { name: 'Analyse Requirement', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'No Supported Practice Area' })).toBeVisible();
   await expect(page.getByRole('region', { name: 'Recommendation workflow progress' }).getByText('UNSUPPORTED', { exact: true })).toBeVisible();
@@ -121,14 +123,14 @@ test("appointment details use searched customers and real slots, with real appro
   let release!: () => void; const approvalGate = new Promise<void>(resolve => { release = resolve; });
   const stats = await setup(page, { approvalGate }); await page.goto(root + "?workflow=guided");
   await page.getByRole("button", { name: "Select Lawyer", exact: true }).click(); await page.getByRole("button", { name: "Continue to Appointment" }).click();
-  await page.getByLabel("Search customer").fill("Existing"); await expect.poll(() => stats.searches).toContain("Existing");
-  await page.getByLabel("Customer", { exact: true }).selectOption("customer-1");
+  await expect(page.getByRole("region", { name: "Client intake" })).toContainText("Existing Customer");
+
   await expect(page.getByLabel("Available slot").locator("option")).toHaveCount(2);
   await page.getByLabel("Available slot").selectOption("real-slot"); await page.getByRole("button", { name: "Approve & Create Appointment" }).click();
   await expect(page.getByText("CREATING APPOINTMENT", { exact: true })).toBeVisible();
   await expect(stage(page, "Administrator Review")).toHaveAttribute("data-state", "COMPLETE"); await expect(stage(page, "Appointment")).toHaveAttribute("data-state", "ACTIVE");
   release(); await expect(page.getByRole("heading", { name: "Appointment Created" })).toBeVisible();
-  await expect(page.getByText("9 of 9 stages complete")).toBeVisible(); await expect(page.getByText("Existing Customer", { exact: true })).toBeVisible();
+  await expect(page.getByText("9 of 9 stages complete")).toBeVisible(); await expect(page.getByText("Existing Customer", { exact: true }).first()).toBeVisible();
   await expect(page.getByRole("link", { name: "View Appointment" })).toHaveAttribute("href", "/admin/appointments?appointment=appointment-1");
   await page.getByText("View Workflow Details", { exact: true }).click(); await expect(page.getByText("Appointment approved by administrator", { exact: true })).toBeVisible();
   expect(stats.approvals).toBe(1); expect(stats.slotDates.every(value => value === date)).toBe(true);
@@ -154,7 +156,7 @@ for (const width of [1440, 1024, 768, 375, 320]) {
     await expect(page.getByRole("heading", { name: "Administrator Review", exact: true })).toBeFocused();
     await page.screenshot({ path: info.outputPath(`review-${width}.png`), fullPage: true });
     await page.getByRole("button", { name: "Continue to Appointment" }).focus(); await page.keyboard.press("Enter");
-    await expect(page.getByLabel("Search customer")).toBeVisible(); expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+    await expect(page.getByRole("region", { name: "Client intake" })).toContainText("Existing Customer"); expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
     expect(await page.getByRole("region", { name: "Recommendation workflow progress" }).locator("svg").evaluateAll(nodes => nodes.flatMap(node => node.getAnimations({ subtree: true })).length)).toBe(0);
     await page.screenshot({ path: info.outputPath(`appointment-${width}.png`), fullPage: true });
   });
@@ -171,7 +173,7 @@ test("slow restoration hides the ready form until the workflow resolves", async 
 for (const code of [422, 503]) {
   test(`analysis ${code} gives an actionable retry without ranking or booking`, async ({ page }) => {
     const options = { fail: code }; await setup(page, options); await page.goto(root);
-    await page.getByLabel("Legal requirement").fill("Property title review"); await page.getByRole("button", { name: "Analyse Requirement", exact: true }).click();
+    await selectIntakeClient(page); await page.getByLabel("Legal requirement").fill("Property title review"); await page.getByRole("button", { name: "Analyse Requirement", exact: true }).click();
     await expect(page.getByRole("alert")).toContainText(code === 422 ? "Catalog Validation Failed" : "AI Interpretation Failed");
     await expect(page.getByRole("button", { name: "Approve & Create Appointment" })).toHaveCount(0);
     options.fail = 0; await page.getByRole("button", { name: "Retry Analysis" }).click();
@@ -186,19 +188,20 @@ test("View Appointment opens the actual appointment details on the Admin route",
   await expect(page.getByRole("heading", { name: "Appointment Audit & Details" })).toBeVisible(); await expect(page.getByText("ID: appointment-1", { exact: true })).toBeVisible();
 });
 
-test("customer lookup failure can retry within appointment details", async ({ page }) => {
+test("client lookup failure can retry before analysis", async ({ page }) => {
   await setup(page); let fail = true;
-  await page.route("**/api/lawyer-recommendations/customers**", async route => { if (fail) await route.fulfill({ status: 503, json: { message: "Safe failure" } }); else await route.fallback(); });
-  await page.goto(root + "?workflow=guided"); await page.getByRole("button", { name: "Select Lawyer", exact: true }).click(); await page.getByRole("button", { name: "Continue to Appointment" }).click();
-  await expect(page.getByRole("alert")).toContainText("Customer Search Unavailable"); fail = false;
-  await page.getByRole("button", { name: "Retry Customers" }).click(); await page.getByLabel("Customer", { exact: true }).selectOption("customer-1"); await expect(page.getByRole("alert")).toHaveCount(0);
+  await page.route("**/api/clients/search*", async route => { if (fail) await route.fulfill({ status: 503, json: { message: "Safe failure" } }); else await route.fallback(); });
+  await page.goto(root); await expect(page.getByRole("alert")).toContainText("Client search could not be loaded");
+  await expect(page.getByRole("button", { name: "Analyse Requirement", exact: true })).toBeDisabled(); fail = false;
+  await page.getByRole("button", { name: "Retry Client Search" }).click(); await selectIntakeClient(page);
+  await expect(page.getByRole("alert")).toHaveCount(0);
 });
 
 test("booking failure retries the actual approval mutation without another analysis", async ({ page }) => {
   const stats = await setup(page); let fail = true;
   await page.route("**/api/lawyer-recommendations/guided/approve", async route => { if (fail) await route.fulfill({ status: 500, json: { message: "Appointment could not be created. Please retry." } }); else await route.fallback(); });
   await page.goto(root + "?workflow=guided"); await page.getByRole("button", { name: "Select Lawyer", exact: true }).click(); await page.getByRole("button", { name: "Continue to Appointment" }).click();
-  await page.getByLabel("Customer", { exact: true }).selectOption("customer-1"); await page.getByLabel("Available slot").selectOption("real-slot"); await page.getByRole("button", { name: "Approve & Create Appointment" }).click();
+  await page.getByLabel("Available slot").selectOption("real-slot"); await page.getByRole("button", { name: "Approve & Create Appointment" }).click();
   await expect(page.getByRole("alert")).toContainText("Appointment Could Not Be Created"); fail = false;
   await page.getByRole("button", { name: "Retry Appointment", exact: true }).click(); await expect(page.getByRole("heading", { name: "Appointment Created" })).toBeVisible(); expect(stats.submissions).toBe(0);
 });
@@ -208,5 +211,5 @@ test("appointment details failure retains success and retries its read request",
   await page.route("**/api/lawyer-recommendations/guided", route => route.fulfill({ json: { ...result, status: "ACTION_COMPLETED", appointmentId: "appointment-1", approvedLawyerId: "lawyer-1" } }));
   await page.route("**/api/appointments/appointment-1", async route => { if (fail) await route.fulfill({ status: 503, json: {} }); else await route.fallback(); });
   await page.goto(root + "?workflow=guided"); await expect(page.getByRole("heading", { name: "Appointment Created" })).toBeVisible(); await expect(page.getByRole("alert")).toContainText("Appointment Details Unavailable");
-  fail = false; await page.getByRole("button", { name: "Retry Appointment Details" }).click(); await expect(page.getByText("Existing Customer", { exact: true })).toBeVisible(); await expect(page.getByRole("alert")).toHaveCount(0);
+  fail = false; await page.getByRole("button", { name: "Retry Appointment Details" }).click(); await expect(page.getByText("Existing Customer", { exact: true }).first()).toBeVisible(); await expect(page.getByRole("alert")).toHaveCount(0);
 });

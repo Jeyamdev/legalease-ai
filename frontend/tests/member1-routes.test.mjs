@@ -64,15 +64,14 @@ test("each direct section URL renders the shared header and its active section",
     ["lawyers", "Lawyers", "All Practice Areas"],
     ["specializations", "Practice Areas", "Loading Practice Areas"],
     ["legal-services", "Legal Services", "Loading Legal Services"],
-    ["recommendations", "AI Recommendation", "Analyse Requirement"],
-    ["ai-operations", "AI Operations", "Run Workforce Analysis"],
+    ["workforce-hiring", "Workforce &amp; Hiring", "Run Workforce Analysis"],
   ];
 
   for (const [path, label, content] of sections) {
     const html = renderToStaticMarkup(React.createElement(MemoryRouter, { initialEntries: [`${root}/${path}`] },
       React.createElement(Routes, null, routes)));
     assert.equal((html.match(/Lawyer &amp; Legal Service Management/g) ?? []).length, 1, path);
-    assert.match(html, /Manage practitioners, legal categories, services and AI recommendations/, path);
+    assert.match(html, /Manage practitioners, legal categories, services and workforce coverage/, path);
     assert.match(html, new RegExp(`aria-current="page"[^>]*>${label}<\/a>`), path);
     assert.match(html, new RegExp(content), path);
     if (path === "lawyers") {
@@ -203,7 +202,7 @@ test("the module default and legacy lawyer URL point to lawyers", () => {
   assert.equal(legacy.element.props.children.props.to, `${root}/lawyers`);
   assert.equal(module.children.find(route => route.index).element.props.to, "lawyers");
   assert.deepEqual(module.children.filter(route => route.path).map(route => route.path),
-    ["lawyers", "specializations", "legal-services", "recommendations", "ai-operations"]);
+    ["lawyers", "specializations", "legal-services", "workforce-hiring"]);
 });
 
 test("practice area manager shows real counts, sorted list actions and empty state", () => {
@@ -310,7 +309,7 @@ test("practice area details use the Admin endpoint without changing the public l
 
 test("existing recommendation form renders without requesting recommendations", () => {
   const html = renderToStaticMarkup(React.createElement(MemoryRouter, null, React.createElement(LawyerRecommendations)));
-  assert.match(html, /AI Lawyer Recommendation/);
+  assert.match(html, /AI Lawyer Matching/);
   assert.match(html, /Analyse Requirement/);
   assert.doesNotMatch(html, /Customer UUID|Slot ID/);
 });

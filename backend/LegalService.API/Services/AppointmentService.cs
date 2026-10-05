@@ -33,6 +33,8 @@ public class AppointmentService : IAppointmentService
         _logger.LogInformation("Attempting to book appointment. LawyerId: {LawyerId}, SlotId: {SlotId}, CustomerId: {CustomerId}",
             request.LawyerId, request.SlotId, request.CustomerId);
 
+        if (request.AppointmentSource != null && !new[] { "CLIENT_PORTAL", "FRONT_DESK", "AI_FRONT_DESK", "ADMIN" }.Contains(request.AppointmentSource))
+            throw new ApiException(400, "Invalid appointment entry channel.");
         await using var transaction = await availability.BeginMutationAsync();
         await availability.LockLawyerAsync(request.LawyerId);
         await ValidateCustomerAsync(request.CustomerId);
@@ -47,6 +49,7 @@ public class AppointmentService : IAppointmentService
             AvailabilitySlot = slot,
             Status = "Requested",
             Description = request.Description ?? request.Notes,
+            AppointmentSource = request.AppointmentSource,
             ConsultationType = string.IsNullOrWhiteSpace(request.ConsultationType) ? "Online" : request.ConsultationType,
             LegalServiceCategory = request.LegalServiceCategory,
             CreatedAt = DateTime.UtcNow,
@@ -124,6 +127,7 @@ public class AppointmentService : IAppointmentService
                 Status = a.Status,
                 Description = a.Description,
                 ConsultationType = a.ConsultationType,
+            AppointmentSource = a.AppointmentSource,
                 LegalServiceCategory = a.LegalServiceCategory,
                 CreatedAt = a.CreatedAt,
                 UpdatedAt = a.UpdatedAt
@@ -454,6 +458,7 @@ public class AppointmentService : IAppointmentService
             Status = a.Status,
             Description = a.Description,
             ConsultationType = a.ConsultationType,
+                AppointmentSource = a.AppointmentSource,
             LegalServiceCategory = a.LegalServiceCategory,
             CreatedAt = a.CreatedAt,
             UpdatedAt = a.UpdatedAt,

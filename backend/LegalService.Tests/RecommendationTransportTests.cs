@@ -39,7 +39,7 @@ public class RecommendationTransportTests
         var handler = new Handler((HttpStatusCode)upstream); var logger = new SafeLogger();
         var config = new Microsoft.Extensions.Configuration.ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string,string?> { ["Ai:BaseUrl"]="http://test.invalid/",["Ai:InternalKey"]="test-key" }).Build();
         var service = new RecommendationService(new(handler), config, f.Db, f.Booking.Object, logger);
-        var error = await Assert.ThrowsAsync<ApiException>(() => service.RecommendAsync(new() { Requirement="issue with land document", Date=f.Availability.Date, Limit=5 }, 7, default));
+        var error = await Assert.ThrowsAsync<ApiException>(() => service.RecommendAsync(new() { ClientId = 42, Requirement="issue with land document", Date=f.Availability.Date, Limit=5 }, 7, default));
         Assert.Equal(expected, error.Status);
         Assert.Equal("2030-01-07",handler.Payload.GetProperty("date").GetString());
         Assert.Equal(5,handler.Payload.GetProperty("limit").GetInt32());

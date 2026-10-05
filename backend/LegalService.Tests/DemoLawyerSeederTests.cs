@@ -62,6 +62,8 @@ public class DemoLawyerSeederTests
         Assert.Equal(17, await db.LawyerAvailabilities.CountAsync());
         Assert.Equal(210, await db.LawyerWorkingSchedules.CountAsync());
         Assert.Equal(2, await db.LawyerUnavailabilities.CountAsync());
+        Assert.All(db.LawyerUnavailabilities, leave => Assert.DoesNotContain("Scheduling demo", leave.Reason));
+        Assert.All(db.Appointments, appointment => Assert.Null(appointment.Description));
         Assert.Equal(17, await db.Appointments.CountAsync());
         Assert.Equal(17, await db.AvailabilitySlots.CountAsync());
         Assert.Equal(25, await db.LegalServices.CountAsync());
@@ -198,6 +200,29 @@ public class DemoLawyerSeederTests
         Assert.Equal(0, result.Windows); Assert.Equal(0, result.Slots);
         Assert.Equal("Admin edited profile", profile.Name); Assert.Equal("ADMIN/23", profile.LicenseNumber); Assert.Equal(new TimeOnly(19, 0), row.EndTime);
         Assert.Equal(17, await db.Appointments.CountAsync()); Assert.Equal(2, await db.LawyerUnavailabilities.CountAsync());
+    }
+
+    [Fact]
+    public async Task SchedulingSeedRecognizesLegacyMarkersWithoutRewritingStoredRecords()
+    {
+        await using var db = new ApplicationDbContext(new DbContextOptionsBuilder<ApplicationDbContext>()
+            .UseInMemoryDatabase(Guid.NewGuid().ToString()).Options);
+        db.Specializations.AddRange(CategoryNames.Select((name, index) => new Specialization { SpecializationId = index + 1, Name = name }));
+        await db.SaveChangesAsync();
+        var today = new DateOnly(2030, 5, 1);
+        await DemoLawyerSeeder.SeedAsync(db, new TestPasswords(), today);
+        var leave = await db.LawyerUnavailabilities.SingleAsync(l => l.IsFullDay);
+        var day = DateOnly.FromDateTime(leave.StartDateTime);
+        leave.Reason = $"[Scheduling demo 0 {day:yyyy-MM-dd}] Annual Leave";
+        var appointments = await db.Appointments.Include(a => a.Lawyer).ToListAsync();
+        foreach (var appointment in appointments)
+            appointment.Description = $"[Scheduling demo {(appointment.Lawyer.Email == "lawyer03@example.test" ? 2 : 3)} {day:yyyy-MM-dd}] Development scheduling demonstration";
+        await db.SaveChangesAsync();
+        var result = await DemoLawyerSeeder.SeedExistingSchedulesAsync(db, today);
+        Assert.Equal(0, result.Windows); Assert.Equal(0, result.Slots);
+        Assert.StartsWith("[Scheduling demo 0", leave.Reason);
+        Assert.Equal(2, await db.LawyerUnavailabilities.CountAsync());
+        Assert.Equal(17, await db.Appointments.CountAsync());
     }
 
     private sealed class TestPasswords : IPasswordService

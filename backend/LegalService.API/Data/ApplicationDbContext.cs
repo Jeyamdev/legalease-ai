@@ -88,6 +88,13 @@ public class ApplicationDbContext : DbContext
         {
             entity.HasKey(x => x.WorkflowId);
             entity.Property(x => x.Status).HasMaxLength(32).IsRequired();
+            entity.Property(x => x.Status).IsConcurrencyToken();
+            entity.Property(x => x.ClientId).IsConcurrencyToken();
+            entity.Property(x => x.ReviewStage).HasMaxLength(20).IsRequired().IsConcurrencyToken();
+            entity.Property(x => x.SelectedLawyerId).IsConcurrencyToken();
+            entity.Property(x => x.SelectedSlotId).IsConcurrencyToken();
+            entity.Property(x => x.BookingDate).IsConcurrencyToken();
+            entity.HasOne<User>().WithMany().HasForeignKey(x => x.ClientId).OnDelete(DeleteBehavior.SetNull);
             entity.Property(x => x.UserRequirement).HasMaxLength(4000).IsRequired();
             entity.Property(x => x.ParsedRequirementJson).HasColumnType("jsonb");
             entity.Property(x => x.RecommendationsJson).HasColumnType("jsonb");
@@ -567,10 +574,13 @@ public class ApplicationDbContext : DbContext
             new Specialization { SpecializationId = 4, Name = "Property Law", Description = "Real estate transactions, leases, and title disputes." }
         );
 
+        // Match the existing migration snapshot so model checks do not see new seed data on every build.
+        var legalServiceSeedCreatedAt = new DateTime(2026, 10, 4, 15, 11, 10, 985, DateTimeKind.Utc).AddTicks(3860);
+        var documentationSeedCreatedAt = new DateTime(2026, 10, 4, 15, 11, 10, 985, DateTimeKind.Utc).AddTicks(3880);
         modelBuilder.Entity<LegalService.API.Models.Entities.LegalService>().HasData(
-            new LegalService.API.Models.Entities.LegalService { LegalServiceId = 1, ServiceName = "Criminal Defense Consulting", Description = "Representation and case review for criminal defense cases.", Category = "Criminal Law" },
-            new LegalService.API.Models.Entities.LegalService { LegalServiceId = 2, ServiceName = "Divorce & Custody Filing", Description = "Preparation and filing for divorce and child custody.", Category = "Family Law" },
-            new LegalService.API.Models.Entities.LegalService { LegalServiceId = 3, ServiceName = "Corporate Registration & Compliance", Description = "Incorporation filings and compliance setup.", Category = "Corporate Law" }
+            new LegalService.API.Models.Entities.LegalService { LegalServiceId = 1, ServiceName = "Criminal Defense Consulting", Description = "Representation and case review for criminal defense cases.", Category = "Criminal Law", CreatedAt = legalServiceSeedCreatedAt },
+            new LegalService.API.Models.Entities.LegalService { LegalServiceId = 2, ServiceName = "Divorce & Custody Filing", Description = "Preparation and filing for divorce and child custody.", Category = "Family Law", CreatedAt = legalServiceSeedCreatedAt },
+            new LegalService.API.Models.Entities.LegalService { LegalServiceId = 3, ServiceName = "Corporate Registration & Compliance", Description = "Incorporation filings and compliance setup.", Category = "Corporate Law", CreatedAt = legalServiceSeedCreatedAt }
         );
 
         modelBuilder.Entity<DocumentationService>().HasData(
@@ -580,6 +590,7 @@ public class ApplicationDbContext : DbContext
                 Name = "Contract Review & Amendment",
                 Description = "Reviewing lease/sales agreements and drafting amendments.",
                 IsActive = true,
+                CreatedAt = documentationSeedCreatedAt,
                 RequiredDocuments = "[\"Original Contract\",\"Amendment Request Letter\",\"NIC Copy\"]"
             },
             new DocumentationService
@@ -588,6 +599,7 @@ public class ApplicationDbContext : DbContext
                 Name = "Affidavit & Notary Services",
                 Description = "Drafting affidavits and arranging official notarization.",
                 IsActive = true,
+                CreatedAt = documentationSeedCreatedAt,
                 RequiredDocuments = "[\"NIC\",\"Completed Affidavit Draft\",\"Witness Details\"]"
             },
             new DocumentationService
@@ -596,6 +608,7 @@ public class ApplicationDbContext : DbContext
                 Name = "Power of Attorney Drafting",
                 Description = "Drafting General or Special Power of Attorney documents.",
                 IsActive = true,
+                CreatedAt = documentationSeedCreatedAt,
                 RequiredDocuments = "[\"NIC of Grantor\",\"NIC of Grantee\",\"Scope of Authority Document\"]"
             }
         );

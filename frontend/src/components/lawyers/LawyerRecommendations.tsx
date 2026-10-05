@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { WorkflowResponsibilities } from "../common/WorkflowResponsibilities";
 import type { RecommendationResult } from "../../api/recommendationsApi";
 import { useRecommendationWorkflow } from "../../hooks/useRecommendationWorkflow";
+import { ClientIntake } from "../../features/lawyerServices/recommendations/components/ClientIntake";
 import { RequirementForm } from "../../features/lawyerServices/recommendations/components/RequirementForm";
 import { RecommendationWorkflowProgress } from "../../features/lawyerServices/recommendations/components/RecommendationWorkflowProgress";
 import { InterpretationSummary } from "../../features/lawyerServices/recommendations/components/InterpretationSummary";
@@ -16,7 +17,7 @@ import { secondaryButton, surface } from "../../features/lawyerServices/recommen
 export function RecommendationWorkflow({ result }: { result: RecommendationResult }) {
   return <RecommendationWorkflowProgress result={result} />;
 }
-export function LawyerRecommendations() {
+export function LawyerRecommendations({ showHeading = true }: { showHeading?: boolean }) {
   const w = useRecommendationWorkflow();
   const container = useRef<HTMLElement>(null);
   const focusState = w.restoring ? "restoring" : w.result ? `${w.result.status}:${w.view}` : "ready";
@@ -29,10 +30,11 @@ export function LawyerRecommendations() {
   const unsupported = w.result?.status === "UNSUPPORTED";
   const noMatch = w.result?.status === "NO_MATCH";
   const failed = w.result?.status === "FAILED";
-  return <section ref={container} id="lawyer-recommendations" aria-labelledby="recommendation-title" className="min-w-0 space-y-6 text-slate-900">
-    <header className="flex flex-wrap items-start justify-between gap-3"><div><h2 id="recommendation-title" className="text-xl font-bold">AI Lawyer Recommendation</h2><p className="mt-2 max-w-2xl text-sm leading-relaxed text-slate-500">AI-assisted matching using verified Practice Area, service, experience and availability data.</p></div>{w.result && w.result.status !== "ACTION_COMPLETED" && <button type="button" disabled={w.approving} onClick={() => w.clearWorkflow()} className={secondaryButton}>Start New Analysis</button>}</header>
+  return <section ref={container} id="lawyer-recommendations" aria-labelledby={showHeading ? "recommendation-title" : undefined} aria-label={showHeading ? undefined : "Lawyer matching workflow"} className="min-w-0 space-y-6 text-slate-900">
+    {(showHeading || (w.result && w.result.status !== "ACTION_COMPLETED")) && <header className="flex flex-wrap items-start justify-between gap-3">{showHeading && <div><h2 id="recommendation-title" className="text-xl font-bold">AI Lawyer Matching</h2><p className="mt-2 max-w-2xl text-sm leading-relaxed text-slate-500">Assist walk-in clients by matching their legal needs with eligible lawyers and verified appointment availability.</p></div>}{w.result && w.result.status !== "ACTION_COMPLETED" && <button type="button" disabled={w.approving} onClick={() => w.clearWorkflow()} className={secondaryButton}>Start New Analysis</button>}</header>}
     {resolving ? <div role="status" className={surface}>Restoring recommendation workflow...</div> : <>
-      {!w.result && !w.workflowId && <><RequirementForm workflow={w} />{!w.busy && !w.error && <WorkflowResponsibilities descriptions={{ system: "Catalog, eligibility, availability, ranking and validation", ai: "Legal requirement interpretation", human: "Lawyer selection and appointment approval" }} />}</>}
+      <ClientIntake workflow={w} />
+      {!w.result && !w.workflowId && <><RequirementForm workflow={w} />{!w.busy && !w.error && <WorkflowResponsibilities descriptions={{ system: "Client records, catalog, eligibility, availability, ranking and booking validation", ai: "Legal requirement interpretation", human: "Client intake, lawyer selection and appointment approval" }} />}</>}
       {(w.busy || w.result || (!!w.error && !w.workflowId)) && <RecommendationWorkflowProgress result={w.result} busy={w.busy} approving={w.approving} view={w.view} failed={!!w.error} />}
       {w.analysisSeconds != null && w.result && <p className="text-xs text-slate-500">Analysis completed in {w.analysisSeconds.toFixed(1)}s</p>}
       <RecommendationError workflow={w} />

@@ -527,3 +527,6 @@ backend/LegalService.API/Storage/Uploads/
 scratch_*.py
 sample-lawyer.json
 ai-service/data/
+
+# Keep personal editor appearance out of feature commits.
+.vscode/settings.json

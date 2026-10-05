@@ -2,9 +2,9 @@ import { officeToday } from "../../../../api/schedulingApi";
 import { CalendarDays, ArrowRight } from "lucide-react";
 import { field, primaryButton, surface, type RecommendationWorkflowModel } from "./recommendationUI";
 export function RequirementForm({ workflow: w }: { workflow: RecommendationWorkflowModel }) {
-  const locked = w.busy || !!w.result;
+  const locked = w.busy || !!w.result || !w.selectedClient;
   return <form id="requirement-analysis" onSubmit={w.submit} className={surface} aria-label="Requirement analysis">
-    <div className="mb-5 flex items-center gap-3"><span className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-100 text-xs font-bold">01</span><div><h3 className="font-bold">Describe the legal requirement</h3><p className="mt-1 text-xs text-slate-500">Start with the issue the client needs help with.</p></div></div>
+    <div className="mb-5 flex items-center gap-3"><span className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-100 text-xs font-bold">02</span><div><h3 className="font-bold">Describe the legal requirement</h3><p className="mt-1 text-xs text-slate-500">Start with the issue the client needs help with.</p></div></div>
     <label className="block text-sm font-semibold">Legal requirement
       <textarea required minLength={3} maxLength={4000} rows={5} disabled={locked} value={w.requirement} onChange={event => w.setRequirement(event.target.value)} placeholder="Describe the client's legal requirement..." className={`${field} resize-y`} />
     </label>

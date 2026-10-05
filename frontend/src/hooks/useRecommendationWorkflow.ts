@@ -1,7 +1,8 @@
+import { clientIntakeApi, clientBookingId, type ClientSummary } from "../api/clientsApi";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useSearchParams } from "react-router-dom";
 import axios from "axios";
-import { recommendationsApi, type AppointmentSummary, type RecommendationCustomer, type RecommendationResult, type RecommendationSlot } from "../api/recommendationsApi";
+import { recommendationsApi, type AppointmentSummary, type RecommendationResult, type RecommendationSlot } from "../api/recommendationsApi";
 
 function requestError(error: unknown, fallback: string): string {
   if (!axios.isAxiosError(error)) return fallback;
@@ -35,9 +36,10 @@ export function useRecommendationWorkflow() {
   const [result, setResult] = useState<RecommendationResult>();
   const [selectedLawyer, setSelectedLawyer] = useState("");
   const [bookingDate, setBookingDate] = useState("");
-  const [customerSearch, setCustomerSearch] = useState("");
-  const [customers, setCustomers] = useState<RecommendationCustomer[]>([]);
   const [customerId, setCustomerId] = useState("");
+  const [selectedClient, setSelectedClient] = useState<ClientSummary>();
+  const [reviewSaving, setReviewSaving] = useState(false);
+  const reviewPending = useRef(false);
   const [slotReason, setSlotReason] = useState<string | null>(null);
   const [slots, setSlots] = useState<RecommendationSlot[]>([]);
   const [slotId, setSlotId] = useState("");
@@ -45,11 +47,9 @@ export function useRecommendationWorkflow() {
   const [appointment, setAppointment] = useState<AppointmentSummary>();
   const pending = useRef<AbortController | null>(null);
   const approvalPending = useRef(false);
-  const [customersLoading, setCustomersLoading] = useState(false);
   const [slotsLoading, setSlotsLoading] = useState(false);
   const [restoreVersion, setRestoreVersion] = useState(0);
   const [slotsVersion, setSlotsVersion] = useState(0);
-  const [customersVersion, setCustomersVersion] = useState(0);
   const [appointmentVersion, setAppointmentVersion] = useState(0);
   const loadedWorkflow = useRef<string | null>(null);
 
@@ -67,7 +67,7 @@ export function useRecommendationWorkflow() {
       }
       if (loadedWorkflow.current === workflowId) return;
       setRestoring(true);
-      setResult(undefined); setSelectedLawyer(""); setCustomerId(""); setSlots([]); setSlotId("");
+      setResult(undefined); setSelectedLawyer(""); setSelectedClient(undefined); setCustomerId(""); setSlots([]); setSlotId("");
       setAppointment(undefined); setError("");
       try {
         const data = await recommendationsApi.get(workflowId);
@@ -75,26 +75,18 @@ export function useRecommendationWorkflow() {
         loadedWorkflow.current = workflowId;
         setResult(data);
         setRequirement(data.userRequirement || data.parsedRequirement?.requirement || "");
-        setDate(data.date || ""); setBookingDate(data.date || "");
+        setDate(data.date || ""); setBookingDate(data.bookingDate || data.date || "");
+        if (data.clientId) { const client = await clientIntakeApi.summary(data.clientId); if (!active) return; setSelectedClient(client); setCustomerId(clientBookingId(client.userId)); }
+        else { setSelectedClient(undefined); setCustomerId(""); }
         const saved = savedReview(data);
-        setSelectedLawyer(saved.lawyerId); setView(saved.view); setAnalysisSeconds(undefined);
+        setSelectedLawyer(data.selectedLawyerId || saved.lawyerId);
+        setSlotId(data.selectedSlotId || "");
+        setView(data.reviewStage === "APPOINTMENT" ? "appointment" : data.reviewStage === "REVIEW" ? "review" : saved.view); setAnalysisSeconds(undefined);
       } catch (cause) { if (active) setError(requestError(cause, "Workflow not found or unavailable.")); }
       finally { if (active) setRestoring(false); }
     });
     return () => { active = false; };
   }, [workflowId, restoreVersion]);
-
-  useEffect(() => {
-    if (!selectedLawyer || result?.status !== "AWAITING_APPROVAL") return;
-    let active = true;
-    const timer = window.setTimeout(() => {
-      setCustomersLoading(true);
-      recommendationsApi.customers(customerSearch).then(data => { if (active) setCustomers(data); })
-        .catch(() => { if (active) setError("Could not load customer accounts."); })
-        .finally(() => { if (active) setCustomersLoading(false); });
-    }, 350);
-    return () => { active = false; window.clearTimeout(timer); };
-  }, [selectedLawyer, customerSearch, result?.status, customersVersion]);
 
   useEffect(() => {
     if (!selectedLawyer || !bookingDate || result?.status !== "AWAITING_APPROVAL") return;
@@ -104,7 +96,7 @@ export function useRecommendationWorkflow() {
       setSlotsLoading(true); setSlotReason(null);
       return recommendationsApi.slots(selectedLawyer, bookingDate);
     }).then(data => {
-      if (active && data) { setSlotReason(data.reason ?? null); setSlots(data.availableSlots.map(slot => ({ slotId: slot.slotId, date: data.date, startTime: slot.start, endTime: slot.end, isBooked: false }))); }
+      if (active && data) { if (!Array.isArray(data.availableSlots)) throw new Error("Invalid slot response"); setSlotId(current => data.availableSlots.some(slot => slot.slotId === current) ? current : ""); setSlotReason(data.reason ?? null); setSlots(data.availableSlots.map(slot => ({ slotId: slot.slotId, date: data.date, startTime: slot.start, endTime: slot.end, isBooked: false }))); }
     }).catch(() => { if (active) setError("Could not load available slots for this lawyer and date."); })
       .finally(() => { if (active) setSlotsLoading(false); });
     return () => { active = false; };
@@ -119,27 +111,28 @@ export function useRecommendationWorkflow() {
   }, [result?.status, result?.appointmentId, appointmentVersion]);
 
   const clearWorkflow = (keepInput = false) => {
-    if (pending.current || approvalPending.current) return;
+    if (pending.current || approvalPending.current || reviewPending.current) return;
     if (workflowId) { try { sessionStorage.removeItem(`recommendation-review:${workflowId}`); } catch { /* Optional UX storage. */ } }
     loadedWorkflow.current = null;
     setSearchParams({}, { replace: true });
     setResult(undefined); setSelectedLawyer(""); setSlots([]); setSlotId("");
-    setCustomers([]); setCustomerId(""); setAppointment(undefined); setError("");
+    setAppointment(undefined); setError("");
     setView("matches"); setAnalysisSeconds(undefined);
-    if (!keepInput) { setRequirement(""); setDate(""); }
+    if (!keepInput) { setRequirement(""); setDate(""); setSelectedClient(undefined); setCustomerId(""); }
   };
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (pending.current || approvalPending.current || result) return;
+    if (!selectedClient) { setError("Select or register a client before analysing the requirement."); return; }
     if (requirement.trim().length < 3) { setError("Describe your legal requirement using at least three characters."); return; }
     const controller = new AbortController(); pending.current = controller;
     const started = performance.now();
     setAnalysisSeconds(undefined); setView("matches");
     setBusy(true); setError(""); setResult(undefined); setSelectedLawyer("");
-    setCustomers([]); setCustomerId(""); setSlots([]); setSlotId(""); setAppointment(undefined);
+    setSlots([]); setSlotId(""); setAppointment(undefined);
     try {
-      const data = await recommendationsApi.recommend(requirement.trim(), date, controller.signal);
+      const data = await recommendationsApi.recommend(requirement.trim(), date, controller.signal, selectedClient.userId);
       if (controller.signal.aborted) return;
       loadedWorkflow.current = data.workflowId;
       setAnalysisSeconds((performance.now() - started) / 1000);
@@ -154,32 +147,44 @@ export function useRecommendationWorkflow() {
   };
 
   const selected = result?.recommendations.find(item => item.lawyerId === selectedLawyer);
-  const changeView = (next: RecommendationView, lawyerId = selectedLawyer) => {
-    if (approvalPending.current) return;
-    setView(next);
-    if (result) { try { sessionStorage.setItem(`recommendation-review:${result.workflowId}`, JSON.stringify({ lawyerId, view: next })); } catch { /* Optional UX storage. */ } }
+  const persistReview = async (next: RecommendationView, lawyerId = selectedLawyer, nextDate = bookingDate, nextSlot = slotId, client = selectedClient, confirmClientChange = false) => {
+    if (!result || !client || approvalPending.current || reviewPending.current) return false;
+    reviewPending.current = true; setReviewSaving(true); setError("");
+    try {
+      const updated = await recommendationsApi.review(result.workflowId, { clientId: client.userId, lawyerId: lawyerId || null, bookingDate: nextDate || null, slotId: nextSlot || null, stage: next.toUpperCase(), confirmClientChange });
+      setResult(updated); setView(next); return true;
+    } catch (cause) { setError(requestError(cause, "The review could not be saved. Please retry.")); return false; }
+    finally { reviewPending.current = false; setReviewSaving(false); }
   };
-  const selectLawyer = (id: string) => {
+  const selectClient = async (client: ClientSummary, confirmClientChange = false) => {
+    if (pending.current || approvalPending.current || reviewPending.current || result?.status === "ACTION_COMPLETED") return false;
+    if (result?.status === "AWAITING_APPROVAL" && !await persistReview(view === "appointment" ? "review" : view, selectedLawyer, bookingDate, "", client, confirmClientChange)) return false;
+    setSelectedClient(client); setCustomerId(clientBookingId(client.userId)); setSlotId(""); setError(""); return true;
+  };
+  const changeView = async (next: RecommendationView, lawyerId = selectedLawyer) => {
+    if (await persistReview(next, lawyerId)) {
+      try { sessionStorage.setItem(`recommendation-review:${result?.workflowId}`, JSON.stringify({ lawyerId, view: next })); } catch { /* Optional UX storage. */ }
+    }
+  };
+  const selectLawyer = async (id: string) => {
     if (approvalPending.current || result?.status !== "AWAITING_APPROVAL" || !result.recommendations.some(item => item.lawyerId === id)) return;
-    changeView("review", id);
-    if (id === selectedLawyer) return;
-    setCustomersLoading(true);
-    if (bookingDate) setSlotsLoading(true);
-    setSelectedLawyer(id); setCustomerId(""); setCustomers([]); setSlots([]); setSlotId(""); setError("");
+    if (!selectedClient) { setError("Select the client before reviewing a lawyer."); return; }
+    if (!await persistReview("review", id, result.date || "", "")) return;
+    if (id !== selectedLawyer) { setSelectedLawyer(id); setBookingDate(result.date || ""); setSlots([]); setSlotId(""); }
   };
-  const changeBookingDate = (value: string) => {
+  const changeBookingDate = async (value: string) => {
     if (result?.date || approvalPending.current || value === bookingDate) return;
+    if (!await persistReview("appointment", selectedLawyer, value, "")) return;
     setBookingDate(value); setSlotReason(null); setSlots([]); setSlotId("");
   };
   const retrySlots = () => { setSlotReason(null); setSlotsLoading(true); setSlotId(""); setSlots([]); setSlotsVersion(value => value + 1); };
   const retryRestore = () => { loadedWorkflow.current = null; setRestoreVersion(value => value + 1); };
-  const retryCustomers = () => { setError(""); setCustomerId(""); setCustomersLoading(true); setCustomersVersion(value => value + 1); };
   const retryAppointment = () => { setError(""); setAppointmentVersion(value => value + 1); };
-  const changeSelection = () => { changeView("matches", ""); setSelectedLawyer(""); setSlotId(""); setCustomerId(""); setError(""); };
+  const changeSelection = async () => { if (await persistReview("matches", "", "", "")) { setSelectedLawyer(""); setSlotId(""); setError(""); } };
   const approve = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!result || result.status !== "AWAITING_APPROVAL" || approvalPending.current ||
-        !customerId || !slotId || customersLoading || slotsLoading) return;
+    if (!result || result.status !== "AWAITING_APPROVAL" || approvalPending.current || reviewPending.current ||
+        !customerId || !slotId || slotsLoading) return;
     approvalPending.current = true;
     setApproving(true); setError("");
     try {
@@ -198,9 +203,10 @@ export function useRecommendationWorkflow() {
     } finally { approvalPending.current = false; setApproving(false); }
   };
   return { workflowId, requirement, setRequirement, date, setDate, busy, restoring, error, result,
-    selectedLawyer, selectLawyer, bookingDate, changeBookingDate, customerSearch, setCustomerSearch,
-    customers, customerId, setCustomerId, slotReason, slots, slotId, setSlotId, approving, appointment,
-    customersLoading, slotsLoading, clearWorkflow, submit, selected, approve, retryRestore, retrySlots,
-    view, analysisSeconds, changeSelection, retryCustomers, retryAppointment,
+    selectedClient, selectClient, reviewSaving,
+    selectedLawyer, selectLawyer, bookingDate, changeBookingDate,
+    customerId, slotReason, slots, slotId, setSlotId: async (value: string) => { if (await persistReview("appointment", selectedLawyer, bookingDate, value)) setSlotId(value); }, approving, appointment,
+    slotsLoading, clearWorkflow, submit, selected, approve, retryRestore, retrySlots,
+    view, analysisSeconds, changeSelection, retryAppointment,
     continueToAppointment: () => changeView("appointment"), backToReview: () => changeView("review") };
 }

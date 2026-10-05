@@ -75,6 +75,6 @@ test("Admin keeps one module with Lawyers, Practice Areas and Legal Services", a
 test("old admin lawyer URL redirects into the current module", async ({ page }) => {
   await page.addInitScript(staff => localStorage.setItem("legalease_staff_user", JSON.stringify(staff)), admin);
   await page.goto("/admin/lawyer-management/recommendation-test");
-  await expect(page).toHaveURL(/\/admin\/lawyer-services\/recommendations$/);
-  await expect(page.getByRole("heading", { name: "AI Lawyer Recommendation" })).toBeVisible();
+  await expect(page).toHaveURL(/\/admin\/lawyer-matching$/);
+  await expect(page.getByRole("heading", { name: "AI Lawyer Matching" })).toBeVisible();
 });

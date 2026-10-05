@@ -33,7 +33,7 @@ public class Member1RecommendationTests
             Availability = new() { AvailabilityId = Guid.NewGuid(), LawyerId = Lawyer.LawyerId, Date = new(2030, 1, 7), StartTime = Slot.StartTime, EndTime = Slot.EndTime, AvailabilitySlots = [Slot] };
             Lawyer.LawyerAvailabilities.Add(Availability);
             Lawyer.LawyerSpecializations.Add(new() { SpecializationId = 4, LawyerId = Lawyer.LawyerId });
-            Workflow = new() { WorkflowId = Guid.NewGuid(), OwnerUserId = 7, Status = "AWAITING_APPROVAL", CategoryId = 4, RequestedDate = Availability.Date,
+            Workflow = new() { WorkflowId = Guid.NewGuid(), ClientId = 42, SelectedLawyerId = Lawyer.LawyerId, SelectedSlotId = Slot.SlotId, ReviewStage = "APPOINTMENT", OwnerUserId = 7, Status = "AWAITING_APPROVAL", CategoryId = 4, RequestedDate = Availability.Date,
                 UserRequirement = "I have a dispute about ownership of my land.",
                 ParsedRequirementJson = JsonSerializer.Serialize(new ParsedLegalRequirement("Land ownership dispute", 4, "Real Estate & Property Law", null, null, [])),
                 RecommendationsJson = JsonSerializer.Serialize(new[] { new Recommendation(Lawyer.LawyerId, 12, "Recorded experience") }) };
@@ -137,7 +137,7 @@ public class Member1RecommendationTests
             parsedRequirement = new ParsedLegalRequirement("Land ownership dispute", scenario == "invalid-area" ? 999 : 4,
                 "Real Estate & Property Law", null, null, []) };
         var error = await Assert.ThrowsAsync<ApiException>(() => f.Service(new(new ResponseHandler(payload))).RecommendAsync(
-            new() { Requirement = f.Workflow.UserRequirement, Date = f.Availability.Date }, 7, default));
+            new() { ClientId = 42, Requirement = f.Workflow.UserRequirement, Date = f.Availability.Date }, 7, default));
         Assert.Equal(status, error.Status);
         Assert.Single(f.Db.LawyerRecommendationWorkflows.Where(w => w.Status == "FAILED"));
         Assert.Empty(f.Db.Appointments);
@@ -153,7 +153,7 @@ public class Member1RecommendationTests
         var handler = new ResponseHandler(new { recommendations = new[] { new Recommendation(f.Lawyer.LawyerId, 99, "Guaranteed win") { FullName = "Invented name" } },
             warnings = Array.Empty<string>(), trace = Array.Empty<object>(),
             parsedRequirement = new ParsedLegalRequirement("Land ownership dispute", 4, "Real Estate & Property Law", null, null, []) });
-        var result = await f.Service(new(handler)).RecommendAsync(new() { Requirement = f.Workflow.UserRequirement }, 7, default);
+        var result = await f.Service(new(handler)).RecommendAsync(new() { ClientId = 42, Requirement = f.Workflow.UserRequirement }, 7, default);
         var candidate = Assert.Single(result.Recommendations);
         Assert.Equal(12, candidate.Score); Assert.Equal(f.Lawyer.Name, candidate.FullName);
         Assert.Contains("Availability Not Filtered", candidate.Reason); Assert.DoesNotContain("Guaranteed", candidate.Reason);

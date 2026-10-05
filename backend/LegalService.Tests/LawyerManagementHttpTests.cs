@@ -118,6 +118,34 @@ public sealed class LawyerManagementHttpTests : IAsyncLifetime
     }
 
     [Theory] [InlineData(null, 401)] [InlineData("Customer", 403)] [InlineData("Lawyer", 403)] [InlineData("Clerk", 403)]
+    public async Task FrontDeskClientAndReviewEndpointsRequireAdmin(string? role, int status)
+    {
+        SignIn(role);
+        Assert.Equal(status, (int)(await _client.GetAsync("/api/clients/search?search=test")).StatusCode);
+        Assert.Equal(status, (int)(await _client.GetAsync("/api/clients/42/summary")).StatusCode);
+        Assert.Equal(status, (int)(await _client.PostAsJsonAsync("/api/clients", new { email = "client@example.test", password = "test-password" })).StatusCode);
+        Assert.Equal(status, (int)(await _client.PutAsJsonAsync($"/api/lawyer-recommendations/{Guid.NewGuid()}/review", new { clientId = 42 })).StatusCode);
+    }
+    [Fact] public async Task AdminQuickRegistrationIsSearchableThroughNormalClientsAndRejectsDuplicates()
+    {
+        SignIn("Admin");
+        using (var scope = _app.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+            db.Roles.Add(new() { Id = Guid.NewGuid(), Name = "Customer" }); await db.SaveChangesAsync();
+        }
+        Assert.Equal(HttpStatusCode.BadRequest, (await _client.PostAsJsonAsync("/api/clients", new { email = "invalid", password = "" })).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await _client.PostAsJsonAsync("/api/clients", new { email = "new@example.test", password = "test-password", role = "Admin" })).StatusCode);
+        var response = await _client.PostAsJsonAsync("/api/clients", new { fullName = "Front Desk Client", email = "new@example.test", password = "test-password" });
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var client = await response.Content.ReadFromJsonAsync<LegalService.API.DTOs.Clients.ClientSummary>();
+        Assert.Equal(client, Assert.Single((await _client.GetFromJsonAsync<LegalService.API.DTOs.Clients.ClientSummary[]>("/api/clients/search?search=new@example.test"))!));
+        Assert.Equal(HttpStatusCode.OK, (await _client.GetAsync($"/api/clients/{client!.UserId}")).StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, (await _client.PostAsJsonAsync("/api/clients", new { email = "NEW@example.test", password = "test-password" })).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await _client.PostAsJsonAsync("/api/lawyer-recommendations", new { requirement = "Land dispute" })).StatusCode);
+    }
+
+    [Theory] [InlineData(null, 401)] [InlineData("Customer", 403)] [InlineData("Lawyer", 403)] [InlineData("Clerk", 403)]
     public async Task WorkforceAndCareerWritesRequireAdmin(string? role, int status)
     {
         SignIn(role); var id = Guid.NewGuid();
@@ -804,7 +832,7 @@ public sealed class LawyerManagementHttpTests : IAsyncLifetime
         await db.SaveChangesAsync();
         var response = await _client.PostAsJsonAsync("/api/lawyer-recommendations", new
         {
-            requirement = "Land ownership dispute", date = preferredDate ? _date : (DateOnly?)null
+            clientId = 42, requirement = "Land ownership dispute", date = preferredDate ? _date : (DateOnly?)null
         });
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var prepared = await response.Content.ReadFromJsonAsync<RecommendationResponse>();
@@ -820,6 +848,7 @@ public sealed class LawyerManagementHttpTests : IAsyncLifetime
         var recordedSlots = await _client.GetFromJsonAsync<List<LegalService.API.DTOs.Appointments.AvailabilitySlotResponse>>($"/api/lawyers/{_lawyerId}/availability?date={_date:yyyy-MM-dd}");
         var slot = Assert.Single(recordedSlots!);
         var selection = new { lawyerId = _lawyerId, customerId = Guid.Parse("00000000-0000-0000-0000-00000000002a"), slotId = slot.SlotId };
+        Assert.Equal(HttpStatusCode.OK, (await _client.PutAsJsonAsync($"/api/lawyer-recommendations/{id}/review", new { clientId = 42, lawyerId = _lawyerId, slotId = slot.SlotId, bookingDate = _date, stage = "APPOINTMENT" })).StatusCode);
         var approval = await _client.PostAsJsonAsync($"/api/lawyer-recommendations/{id}/approve", selection);
         Assert.Equal(HttpStatusCode.OK, approval.StatusCode);
         var completed = await approval.Content.ReadFromJsonAsync<RecommendationResponse>();

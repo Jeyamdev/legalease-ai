@@ -124,7 +124,7 @@ public class Member1PostgresTests
             if (separateWorkflows)
             {
                 secondId = Guid.NewGuid();
-                f.Db.LawyerRecommendationWorkflows.Add(new() { WorkflowId = secondId, OwnerUserId = 7, Status = "AWAITING_APPROVAL", CategoryId = 4,
+                f.Db.LawyerRecommendationWorkflows.Add(new() { WorkflowId = secondId, ClientId = 42, SelectedLawyerId = f.Lawyer.LawyerId, SelectedSlotId = f.Slot.SlotId, ReviewStage = "APPOINTMENT", OwnerUserId = 7, Status = "AWAITING_APPROVAL", CategoryId = 4,
                     RequestedDate = f.Availability.Date, UserRequirement = f.Workflow.UserRequirement,
                     RecommendationsJson = f.Workflow.RecommendationsJson, ParsedRequirementJson = f.Workflow.ParsedRequirementJson });
                 await f.Db.SaveChangesAsync();

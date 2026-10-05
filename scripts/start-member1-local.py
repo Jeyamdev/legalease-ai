@@ -18,13 +18,15 @@ def service_environments(root=ROOT, inherited=None):
     inherited = dict(os.environ if inherited is None else inherited)
     # python-dotenv is also used by the AI services, including its whitespace/quote handling.
     values = {key: value for key, value in dotenv_values(root / 'ai-service/.env').items() if value is not None}
+    backend_local = {key: value for key, value in dotenv_values(root / 'backend/LegalService.API/.env').items()
+                     if key in ('ConnectionStrings__DefaultConnection', 'Jwt__Key') and value is not None}
     key = values.get('AI_INTERNAL_KEY')
     if not key or not key.strip():
         raise ValueError('Configure AI_INTERNAL_KEY in ai-service/.env; no value was changed.')
     if not values.get('GEMINI_API_KEY'):
         raise ValueError('Configure GEMINI_API_KEY in ai-service/.env; no value was changed.')
     python_env = {**inherited, **values}
-    backend_env = {**inherited, 'ASPNETCORE_ENVIRONMENT': 'Development',
+    backend_env = {**backend_local, **inherited, 'ASPNETCORE_ENVIRONMENT': 'Development',
                    'Ai__BaseUrl': 'http://127.0.0.1:8002/', 'Ai__InternalKey': key}
     # ASP.NET configuration is case-insensitive: remove a stale differently-cased alias.
     for name in list(backend_env):

@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-const root = '/admin/lawyer-services/ai-operations';
+const root = '/admin/lawyer-services/workforce-hiring';
 const defaults = { practiceAreaId: 70, practiceAreaName: 'Criminal Law', minimumActiveLawyers: 0, targetActiveLawyers: 0, minimumFutureSlots: 0, highDemandThreshold: 5, watchCapacityRatio: .75, source: 'DEFAULT' };
 async function fixture(page: Page, development = true) {
   await page.addInitScript(() => { localStorage.setItem('legalease_staff_user', JSON.stringify({ userId: 1, name: 'Admin', role: 'Admin' })); localStorage.setItem('token', 'test-token'); });
@@ -27,7 +27,7 @@ test('settings load real defaults save custom rules reset and refetch analysis',
   await expect(page.getByRole('button', { name: 'Run Workforce Analysis' })).toBeVisible(); await page.getByRole('button', { name: 'Workforce Settings', exact: true }).click();
   const dialog = page.getByRole('dialog'); await expect(dialog.getByText('Default', { exact: true })).toBeVisible(); await expect(dialog.getByLabel('High Demand Threshold')).toHaveValue('5');
   await dialog.getByLabel('Minimum Active Lawyers').fill('4'); await dialog.getByLabel('Target Active Lawyers').fill('6'); await dialog.getByLabel('Minimum Future Slots').fill('12'); await dialog.getByLabel('High Demand Threshold').fill('10'); await dialog.getByLabel('Watch Capacity Ratio (%)').fill('80');
-  await dialog.getByRole('button', { name: 'Save Settings' }).click(); await expect(dialog.getByRole('status')).toContainText('Workforce settings saved'); await expect(dialog.getByText('Custom', { exact: true })).toBeVisible(); expect(stats.saves).toBe(1); expect(stats.analyses).toBe(1);
+  await dialog.getByRole('button', { name: 'Save Settings' }).click(); await expect(dialog.getByRole('status')).toContainText('Workforce settings saved'); await expect(dialog.getByText('Custom', { exact: true })).toBeVisible(); expect(stats.saves).toBe(1); await expect.poll(() => stats.analyses).toBe(1);
   await dialog.getByRole('button', { name: 'Reset to Defaults' }).click(); await expect(dialog.getByText('Default', { exact: true })).toBeVisible(); await expect(dialog.getByLabel('Watch Capacity Ratio (%)')).toHaveValue('75'); expect(stats.resets).toBe(1);
   await dialog.getByRole('button', { name: 'Close workforce settings' }).click(); await expect(dialog).toBeHidden(); await expect(page.getByRole('button', { name: 'Workforce Settings', exact: true })).toBeFocused();
 });
@@ -36,25 +36,20 @@ test('local and backend validation errors do not claim a save', async ({ page })
   await dialog.getByLabel('Minimum Active Lawyers').fill('4'); await dialog.getByLabel('Target Active Lawyers').fill('3'); await dialog.getByRole('button', { name: 'Save Settings' }).click(); await expect(dialog.getByRole('alert')).toContainText('target at least the minimum'); expect(stats.saves).toBe(0);
   await dialog.getByLabel('Target Active Lawyers').fill('6'); failSave(); await dialog.getByRole('button', { name: 'Save Settings' }).click(); await expect(dialog.getByRole('alert')).toContainText('Target must be at least minimum');
 });
-test('demo selector applies refetches resets and blocks duplicate recruitment', async ({ page }) => {
-  const { stats } = await fixture(page); await page.goto(root); await page.locator('summary').filter({ hasText: 'Demo Scenarios' }).click();
-  await page.getByLabel('Scenario', { exact: true }).selectOption('RECRUITMENT_NEEDED'); await page.getByRole('button', { name: 'Apply Demo Scenario' }).click(); await expect(page.getByRole('status').filter({ hasText: 'Demo scenario' })).toContainText('Recruitment Needed'); expect(stats.applies).toBe(1); expect(stats.analyses).toBe(1); expect(stats.generates).toBe(0);
-  await page.getByRole('button', { name: 'Run Workforce Analysis' }).click(); await expect(page.getByRole('button', { name: 'Prepare Hiring Proposal' })).toBeEnabled(); await page.getByRole('button', { name: 'View Analysis Details' }).click(); await expect(page.getByText('Workforce Rules', { exact: true })).toBeVisible(); await expect(page.getByText('Below configured minimum lawyer count.', { exact: false }).first()).toBeVisible();
-  await page.getByLabel('Scenario', { exact: true }).selectOption('EXISTING_RECRUITMENT'); await page.getByRole('button', { name: 'Apply Demo Scenario' }).click(); await expect(page.getByRole('status').filter({ hasText: 'Demo scenario' })).toContainText('Existing Recruitment'); await page.getByRole('button', { name: 'Run Workforce Analysis' }).click(); await expect(page.getByRole('heading', { name: 'Current Recruitment' })).toBeVisible(); await expect(page.getByRole('button', { name: 'Prepare Hiring Proposal' })).toHaveCount(0);
-  await page.getByRole('button', { name: 'Reset Demo Data' }).click(); await expect(page.getByRole('status').filter({ hasText: 'Demo baseline' })).toContainText('Demo baseline restored'); await page.getByRole('button', { name: 'Run Workforce Analysis' }).click(); await expect(page.getByRole('heading', { name: 'Workforce Coverage Healthy' })).toBeVisible(); expect(stats.demoResets).toBe(1);
+test('standard Admin page never exposes or invokes development scenario controls', async ({ page }) => {
+  const { stats } = await fixture(page); const demoRequests: string[] = []; page.on('request', request => { if (request.url().includes('/api/dev/workforce-demo')) demoRequests.push(request.url()); }); await page.goto(root);
+  await expect(page.getByText(/Development Only|Demo Scenarios/i)).toHaveCount(0); await expect(page.getByRole('button', { name: 'Apply Demo Scenario' })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Run Workforce Analysis' }).click(); await expect(page.getByRole('button', { name: 'Prepare Hiring Proposal' })).toBeEnabled(); await expect(page.getByText(/Development Only|Demo Scenarios/i)).toHaveCount(0);
+  expect(stats.applies).toBe(0); expect(stats.demoResets).toBe(0); expect(demoRequests).toEqual([]);
 });
 test('a nondevelopment backend never exposes demo controls', async ({ page }) => {
   await fixture(page, false); await page.goto(root); await page.getByRole('button', { name: 'Workforce Settings', exact: true }).click(); await expect(page.getByRole('dialog')).toBeVisible(); await expect(page.getByRole('button', { name: 'Apply Demo Scenario' })).toHaveCount(0); await expect(page.getByText('Demo Scenarios', { exact: false })).toHaveCount(0);
 });
-test('settings dialog and secondary demo controls fit supported widths with keyboard access', async ({ page }, info) => {
+test('settings dialog fits supported widths with keyboard access', async ({ page }, info) => {
   await fixture(page); await page.goto(root);
-  for (const width of [320, 375, 768, 1024, 1440]) {
+  for (const width of [320, 390, 768, 1024, 1440]) {
     await page.setViewportSize({ width, height: 1000 }); await page.goto(root); const open = page.getByRole('button', { name: 'Workforce Settings', exact: true }); await open.focus(); await page.keyboard.press('Enter'); const dialog = page.getByRole('dialog'); await expect(dialog.getByLabel('Minimum Active Lawyers')).toBeVisible();
     expect(await dialog.evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true); await page.screenshot({ path: info.outputPath(`settings-${width}.png`), fullPage: true }); await page.keyboard.press('Escape'); await expect(open).toBeFocused();
-    const details = page.locator('details').filter({ hasText: 'Demo Scenarios' }); if ((await details.getAttribute('open')) === null) { await details.locator('summary').focus(); await page.keyboard.press('Enter'); } expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true); await page.screenshot({ path: info.outputPath(`demo-${width}.png`), fullPage: true });
+    await expect(page.getByText(/Development Only|Demo Scenarios/i)).toHaveCount(0); expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
   }
-});
-
-test('demo mutation protection explains the conflict without claiming success', async ({ page }) => {
-  const { stats, conflictDemo } = await fixture(page); conflictDemo(); await page.goto(root); await page.locator('summary').filter({ hasText: 'Demo Scenarios' }).click(); await page.getByRole('button', { name: 'Apply Demo Scenario' }).click(); await expect(page.getByRole('alert')).toContainText('Review Careers before demonstrating new recruitment'); expect(stats.analyses).toBe(0); await expect(page.getByRole('status')).toHaveCount(0);
 });

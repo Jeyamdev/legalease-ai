@@ -33,7 +33,7 @@ public class RecommendationServiceCatalogTests
         var service = f.Service(new(new Handler(payload)));
         if (scenario is "valid" or "null")
         {
-            var result = await service.RecommendAsync(new() { Requirement = "Property title review" }, 7, default);
+            var result = await service.RecommendAsync(new() { ClientId = 42, Requirement = "Property title review" }, 7, default);
             Assert.True(result.ParsedRequirement!.Supported);
             Assert.Equal(parsed.LegalServiceId, result.ParsedRequirement.LegalServiceId);
             Assert.Equal(12, Assert.Single(result.Recommendations).Score);
@@ -43,7 +43,7 @@ public class RecommendationServiceCatalogTests
             Assert.DoesNotContain("untrusted text", JsonSerializer.Serialize(restored.Trace));
         }
         else
-            Assert.Equal(422, (await Assert.ThrowsAsync<ApiException>(() => service.RecommendAsync(new() { Requirement = "Property title review" }, 7, default))).Status);
+            Assert.Equal(422, (await Assert.ThrowsAsync<ApiException>(() => service.RecommendAsync(new() { ClientId = 42, Requirement = "Property title review" }, 7, default))).Status);
         Assert.Empty(f.Db.Appointments); f.Booking.VerifyNoOtherCalls();
     }
 }

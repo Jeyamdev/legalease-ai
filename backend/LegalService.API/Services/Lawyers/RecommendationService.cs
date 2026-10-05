@@ -16,6 +16,7 @@ namespace LegalService.API.Services.Lawyers;
 public class RecommendationRequest
 {
     [Required, StringLength(4000, MinimumLength = 3)] public string Requirement { get; set; } = "";
+    [Required, Range(1, int.MaxValue)] public int? ClientId { get; set; }
     public DateOnly? Date { get; set; }
     [Range(1, 20)] public int Limit { get; set; } = 5;
 }
@@ -47,12 +48,25 @@ public record WorkflowEvent(DateTime Timestamp, string Step, string Status, stri
 public record RecommendationResponse(List<Recommendation> Recommendations, List<string> Warnings,
     List<JsonElement> Trace, ParsedLegalRequirement? ParsedRequirement = null, DateOnly? Date = null,
     Guid? WorkflowId = null, string? Status = null, Guid? AppointmentId = null, Guid? ApprovedLawyerId = null,
-    string? UserRequirement = null);
+    string? UserRequirement = null, int? ClientId = null, Guid? SelectedLawyerId = null,
+    Guid? SelectedSlotId = null, DateOnly? BookingDate = null, string ReviewStage = "MATCHES");
+[System.Text.Json.Serialization.JsonUnmappedMemberHandling(System.Text.Json.Serialization.JsonUnmappedMemberHandling.Disallow)]
+public sealed class SaveRecommendationReviewRequest
+{
+    [Range(1, int.MaxValue)] public int ClientId { get; set; }
+    public Guid? LawyerId { get; set; }
+    public Guid? SlotId { get; set; }
+    public DateOnly? BookingDate { get; set; }
+    [RegularExpression("^(MATCHES|REVIEW|APPOINTMENT)$")] public string Stage { get; set; } = "MATCHES";
+    public bool ConfirmClientChange { get; set; }
+}
+
 
 public interface ILawyerRecommendationService
 {
     Task<RecommendationResponse> RecommendAsync(RecommendationRequest request, int userId, CancellationToken ct);
     Task<RecommendationResponse> GetAsync(Guid workflowId, int userId, CancellationToken ct);
+    Task<RecommendationResponse> SaveReviewAsync(Guid workflowId, SaveRecommendationReviewRequest request, int userId, CancellationToken ct);
     Task<RecommendationResponse> ApproveAsync(Guid workflowId, ApproveRecommendationRequest request, int userId, CancellationToken ct);
 }
 
@@ -67,6 +81,8 @@ public sealed class RecommendationService(HttpClient client, IConfiguration conf
         var errors = new List<System.ComponentModel.DataAnnotations.ValidationResult>();
         if (!Validator.TryValidateObject(request, new ValidationContext(request), errors, true) || request.Requirement.Trim().Length < 3)
             throw new ApiException(400, "Describe your legal requirement using at least three characters.");
+        if (request.ClientId == null || !await db.Users.AsNoTracking().AnyAsync(x => x.UserId == request.ClientId && x.Role == "Customer", ct))
+            throw new ApiException(400, "Select an existing client before analysing the requirement.");
         var now = DateTime.UtcNow;
         var today = availability.Today;
         var currentTime = TimeOnly.FromDateTime(now);
@@ -82,8 +98,9 @@ public sealed class RecommendationService(HttpClient client, IConfiguration conf
         var workflow = new LawyerRecommendationWorkflow
         {
             WorkflowId = Guid.NewGuid(), OwnerUserId = userId,
-            UserRequirement = request.Requirement.Trim(), RequestedDate = request.Date
+            ClientId = request.ClientId, UserRequirement = request.Requirement.Trim(), RequestedDate = request.Date
         };
+        AddEvent(workflow, "client_selected", "COMPLETED", "Client selected by Administrator", input: $"Client {request.ClientId}");
         AddEvent(workflow, "received", "completed", "Recommendation requested by authenticated admin",
             input: $"Requirement length {workflow.UserRequirement.Length}; requested date {request.Date?.ToString() ?? "none"}",
             output: $"Workflow {workflow.WorkflowId} created");
@@ -276,11 +293,46 @@ public sealed class RecommendationService(HttpClient client, IConfiguration conf
         return ToResponse(workflow);
     }
 
+    public async Task<RecommendationResponse> SaveReviewAsync(Guid workflowId, SaveRecommendationReviewRequest request, int userId, CancellationToken ct)
+    {
+        var workflow = await db.LawyerRecommendationWorkflows.SingleOrDefaultAsync(x => x.WorkflowId == workflowId && x.OwnerUserId == userId, ct)
+            ?? throw new ApiException(404, "Recommendation workflow not found.");
+        if (workflow.Status != "AWAITING_APPROVAL") throw new ApiException(409, "This workflow cannot be reviewed.");
+        if (!new[] { "MATCHES", "REVIEW", "APPOINTMENT" }.Contains(request.Stage)) throw new ApiException(400, "Invalid review stage.");
+        if (!await db.Users.AsNoTracking().AnyAsync(x => x.UserId == request.ClientId && x.Role == "Customer", ct)) throw new ApiException(400, "Select an existing client.");
+        var changedClient = workflow.ClientId != request.ClientId;
+        if (changedClient && workflow.ReviewStage == "APPOINTMENT" && !request.ConfirmClientChange)
+            throw new ApiException(409, "Confirm the client change and review the appointment again.");
+        var recommendations = JsonSerializer.Deserialize<List<Recommendation>>(workflow.RecommendationsJson, JsonOptions) ?? [];
+        if (request.Stage != "MATCHES" && request.LawyerId == null) throw new ApiException(400, "Select a recommended lawyer.");
+        if (request.LawyerId.HasValue && !recommendations.Any(x => x.LawyerId == request.LawyerId)) throw new ApiException(400, "Select a lawyer from this recommendation.");
+        var date = request.BookingDate ?? workflow.RequestedDate;
+        if (date < availability.Today || workflow.RequestedDate.HasValue && date != workflow.RequestedDate) throw new ApiException(400, "Rerun analysis to change the preferred date.");
+        if (request.SlotId.HasValue)
+        {
+            if (!request.LawyerId.HasValue || !date.HasValue) throw new ApiException(400, "Choose a lawyer and appointment date first.");
+            var interval = await availability.ResolveSlotAsync(request.LawyerId.Value, request.SlotId.Value, ct);
+            var day = await availability.GetAsync(request.LawyerId.Value, date.Value, ct);
+            if (interval.Date != date || !day.AvailableSlots.Any(x => x.Start == interval.Start && x.End == interval.End)) throw new ApiException(409, "Selected slot is no longer available.");
+        }
+        if (changedClient) AddEvent(workflow, "client_selected", "COMPLETED", "Administrator changed the selected client", input: $"Client {request.ClientId}");
+        if (workflow.SelectedLawyerId != request.LawyerId && request.LawyerId.HasValue) AddEvent(workflow, "lawyer_selected", "COMPLETED", "Administrator selected a recommended lawyer", input: $"Lawyer {request.LawyerId}");
+        if (request.Stage == "APPOINTMENT" && workflow.ReviewStage != "APPOINTMENT") AddEvent(workflow, "appointment_review_started", "COMPLETED", "Administrator started appointment review");
+        workflow.ClientId = request.ClientId; workflow.SelectedLawyerId = request.LawyerId;
+        workflow.BookingDate = date; workflow.SelectedSlotId = changedClient ? null : request.SlotId;
+        workflow.ReviewStage = changedClient && request.Stage == "APPOINTMENT" ? "REVIEW" : request.Stage;
+        workflow.UpdatedAt = DateTime.UtcNow;
+        try { await db.SaveChangesAsync(ct); }
+        catch (DbUpdateConcurrencyException) { throw new ApiException(409, "The review changed. Reload the workflow before continuing."); }
+        return ToResponse(workflow);
+    }
+
     public async Task<RecommendationResponse> ApproveAsync(Guid workflowId, ApproveRecommendationRequest request, int userId, CancellationToken ct)
     {
         try { return await ApproveValidatedAsync(workflowId, request, userId, ct); }
         catch (DbUpdateException ex) when (ex.InnerException is PostgresException { SqlState: "40001" or "23505" })
         { throw new ApiException(409, "Booking data changed during approval. Refresh the workflow and available slots."); }
+        catch (DbUpdateConcurrencyException) { throw new ApiException(409, "The workflow changed. Reload it before approving."); }
         catch (PostgresException ex) when (ex.SqlState == "40001")
         { throw new ApiException(409, "Booking data changed during approval. Refresh the workflow and available slots."); }
     }
@@ -321,6 +373,10 @@ public sealed class RecommendationService(HttpClient client, IConfiguration conf
             customerNumber is <= 0 or > int.MaxValue ||
             !await db.Users.AsNoTracking().AnyAsync(u => u.UserId == (int)customerNumber && u.Role == "Customer", ct))
             throw new ApiException(400, "Select an existing customer account.");
+        if (workflow.ClientId == null || workflow.ClientId != (int)customerNumber)
+            throw new ApiException(409, "The client changed. Select the client and review the appointment again.");
+        if (workflow.ReviewStage != "APPOINTMENT" || workflow.SelectedLawyerId != request.LawyerId || workflow.SelectedSlotId != request.SlotId)
+            throw new ApiException(409, "Review the selected lawyer and appointment slot before approving.");
         var interval = await availability.ResolveSlotAsync(request.LawyerId, request.SlotId, ct);
         var day = await availability.GetAsync(request.LawyerId, interval.Date, ct);
         if ((workflow.RequestedDate is not null && interval.Date != workflow.RequestedDate) ||
@@ -334,12 +390,14 @@ public sealed class RecommendationService(HttpClient client, IConfiguration conf
             booking = await appointments.BookAppointmentAsync(new BookAppointmentRequest
             {
                 LawyerId = request.LawyerId, CustomerId = request.CustomerId, SlotId = request.SlotId,
+                AppointmentSource = "AI_FRONT_DESK", ConsultationType = "InPerson",
                 Description = workflow.UserRequirement,
                 LegalServiceCategory = JsonSerializer.Deserialize<ParsedLegalRequirement>(workflow.ParsedRequirementJson, JsonOptions)?.CategoryName
             });
         }
         catch (KeyNotFoundException) { throw new ApiException(409, "The appointment slot no longer exists."); }
         catch (InvalidOperationException) { throw new ApiException(409, "The appointment slot is no longer available."); }
+        workflow.SelectedLawyerId = request.LawyerId; workflow.SelectedSlotId = request.SlotId; workflow.BookingDate = interval.Date;
         workflow.ApprovedLawyerId = request.LawyerId;
         workflow.AppointmentId = booking.AppointmentId;
         workflow.Status = "ACTION_COMPLETED";
@@ -358,7 +416,7 @@ public sealed class RecommendationService(HttpClient client, IConfiguration conf
         (JsonSerializer.Deserialize<List<WorkflowEvent>>(w.AuditJson, JsonOptions) ?? [])
             .Select(e => JsonSerializer.SerializeToElement(e, JsonOptions)).ToList(),
         JsonSerializer.Deserialize<ParsedLegalRequirement>(w.ParsedRequirementJson, JsonOptions),
-        w.RequestedDate, w.WorkflowId, w.Status, w.AppointmentId, w.ApprovedLawyerId, w.UserRequirement);
+        w.RequestedDate, w.WorkflowId, w.Status, w.AppointmentId, w.ApprovedLawyerId, w.UserRequirement, w.ClientId, w.SelectedLawyerId, w.SelectedSlotId, w.BookingDate, w.ReviewStage);
 
     private static void AddEvent(LawyerRecommendationWorkflow workflow, string step, string status, string summary,
         string? input = null, string? output = null, string? error = null)

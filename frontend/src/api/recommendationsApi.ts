@@ -12,6 +12,7 @@ export interface WorkflowEvent {
 
 export interface RecommendationResult {
   workflowId: string;
+  clientId?: number | null; selectedLawyerId?: string | null; selectedSlotId?: string | null; bookingDate?: string | null; reviewStage?: string;
   status: string;
   userRequirement?: string | null;
   date?: string | null;
@@ -36,12 +37,14 @@ export interface RecommendationResult {
 export interface RecommendationCustomer { customerId: string; name: string; email: string }
 export interface RecommendationSlot { slotId: string; date: string; startTime: string; endTime: string; isBooked: boolean }
 export interface AppointmentSummary {
-  appointmentId: string; customerName: string; lawyerName: string; date: string; startTime: string; endTime: string;
+  appointmentSource?: string | null; appointmentId: string; customerName: string; lawyerName: string; date: string; startTime: string; endTime: string;
 }
 
 export const recommendationsApi = {
-  recommend: async (requirement: string, date?: string, signal?: AbortSignal) =>
-    (await apiClient.post<RecommendationResult>("/api/lawyer-recommendations", { requirement, date: date || null, limit: 5 }, { signal, timeout: 60000 })).data,
+  recommend: async (requirement: string, date: string | undefined, signal: AbortSignal | undefined, clientId: number) =>
+    (await apiClient.post<RecommendationResult>("/api/lawyer-recommendations", { requirement, date: date || null, limit: 5, clientId }, { signal, timeout: 60000 })).data,
+  review: async (id: string, values: { clientId: number; lawyerId: string | null; slotId: string | null; bookingDate: string | null; stage: string; confirmClientChange?: boolean }) =>
+    (await apiClient.put<RecommendationResult>(`/api/lawyer-recommendations/${id}/review`, values)).data,
   get: async (id: string) => (await apiClient.get<RecommendationResult>(`/api/lawyer-recommendations/${id}`)).data,
   approve: async (id: string, lawyerId: string, customerId: string, slotId: string) =>
     (await apiClient.post<RecommendationResult>(`/api/lawyer-recommendations/${id}/approve`, { lawyerId, customerId, slotId })).data,

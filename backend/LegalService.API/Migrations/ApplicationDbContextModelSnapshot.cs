@@ -96,6 +96,9 @@ namespace LegalService.API.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
+                    b.Property<string>("AppointmentSource")
+                        .HasColumnType("text");
+
                     b.Property<string>("ConsultationType")
                         .IsRequired()
                         .HasColumnType("text");
@@ -474,7 +477,7 @@ namespace LegalService.API.Migrations
                         new
                         {
                             ServiceId = 1,
-                            CreatedAt = new DateTime(2026, 10, 4, 9, 52, 43, 846, DateTimeKind.Utc).AddTicks(3360),
+                            CreatedAt = new DateTime(2026, 10, 4, 15, 11, 10, 985, DateTimeKind.Utc).AddTicks(3880),
                             Description = "Reviewing lease/sales agreements and drafting amendments.",
                             IsActive = true,
                             Name = "Contract Review & Amendment",
@@ -483,7 +486,7 @@ namespace LegalService.API.Migrations
                         new
                         {
                             ServiceId = 2,
-                            CreatedAt = new DateTime(2026, 10, 4, 9, 52, 43, 846, DateTimeKind.Utc).AddTicks(3360),
+                            CreatedAt = new DateTime(2026, 10, 4, 15, 11, 10, 985, DateTimeKind.Utc).AddTicks(3880),
                             Description = "Drafting affidavits and arranging official notarization.",
                             IsActive = true,
                             Name = "Affidavit & Notary Services",
@@ -492,7 +495,7 @@ namespace LegalService.API.Migrations
                         new
                         {
                             ServiceId = 3,
-                            CreatedAt = new DateTime(2026, 10, 4, 9, 52, 43, 846, DateTimeKind.Utc).AddTicks(3360),
+                            CreatedAt = new DateTime(2026, 10, 4, 15, 11, 10, 985, DateTimeKind.Utc).AddTicks(3880),
                             Description = "Drafting General or Special Power of Attorney documents.",
                             IsActive = true,
                             Name = "Power of Attorney Drafting",
@@ -739,7 +742,15 @@ namespace LegalService.API.Migrations
                         .IsRequired()
                         .HasColumnType("jsonb");
 
+                    b.Property<DateOnly?>("BookingDate")
+                        .IsConcurrencyToken()
+                        .HasColumnType("date");
+
                     b.Property<int?>("CategoryId")
+                        .HasColumnType("integer");
+
+                    b.Property<int?>("ClientId")
+                        .IsConcurrencyToken()
                         .HasColumnType("integer");
 
                     b.Property<DateTime>("CreatedAt")
@@ -759,7 +770,22 @@ namespace LegalService.API.Migrations
                     b.Property<DateOnly?>("RequestedDate")
                         .HasColumnType("date");
 
+                    b.Property<string>("ReviewStage")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<Guid?>("SelectedLawyerId")
+                        .IsConcurrencyToken()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("SelectedSlotId")
+                        .IsConcurrencyToken()
+                        .HasColumnType("uuid");
+
                     b.Property<string>("Status")
+                        .IsConcurrencyToken()
                         .IsRequired()
                         .HasMaxLength(32)
                         .HasColumnType("character varying(32)");
@@ -777,6 +803,8 @@ namespace LegalService.API.Migrations
                         .HasColumnType("jsonb");
 
                     b.HasKey("WorkflowId");
+
+                    b.HasIndex("ClientId");
 
                     b.HasIndex("OwnerUserId");
 
@@ -914,7 +942,7 @@ namespace LegalService.API.Migrations
                         {
                             LegalServiceId = 1,
                             Category = "Criminal Law",
-                            CreatedAt = new DateTime(2026, 10, 4, 9, 52, 43, 846, DateTimeKind.Utc).AddTicks(3340),
+                            CreatedAt = new DateTime(2026, 10, 4, 15, 11, 10, 985, DateTimeKind.Utc).AddTicks(3860),
                             Description = "Representation and case review for criminal defense cases.",
                             ServiceName = "Criminal Defense Consulting"
                         },
@@ -922,7 +950,7 @@ namespace LegalService.API.Migrations
                         {
                             LegalServiceId = 2,
                             Category = "Family Law",
-                            CreatedAt = new DateTime(2026, 10, 4, 9, 52, 43, 846, DateTimeKind.Utc).AddTicks(3340),
+                            CreatedAt = new DateTime(2026, 10, 4, 15, 11, 10, 985, DateTimeKind.Utc).AddTicks(3860),
                             Description = "Preparation and filing for divorce and child custody.",
                             ServiceName = "Divorce & Custody Filing"
                         },
@@ -930,7 +958,7 @@ namespace LegalService.API.Migrations
                         {
                             LegalServiceId = 3,
                             Category = "Corporate Law",
-                            CreatedAt = new DateTime(2026, 10, 4, 9, 52, 43, 846, DateTimeKind.Utc).AddTicks(3340),
+                            CreatedAt = new DateTime(2026, 10, 4, 15, 11, 10, 985, DateTimeKind.Utc).AddTicks(3860),
                             Description = "Incorporation filings and compliance setup.",
                             ServiceName = "Corporate Registration & Compliance"
                         });
@@ -1175,6 +1203,9 @@ namespace LegalService.API.Migrations
                         .IsRequired()
                         .HasColumnType("text")
                         .HasColumnName("Email");
+
+                    b.Property<bool>("MustChangePassword")
+                        .HasColumnType("boolean");
 
                     b.Property<string>("Name")
                         .IsRequired()
@@ -1452,6 +1483,14 @@ namespace LegalService.API.Migrations
                     b.Navigation("Lawyer");
 
                     b.Navigation("LegalService");
+                });
+
+            modelBuilder.Entity("LegalService.API.Models.Entities.LawyerRecommendationWorkflow", b =>
+                {
+                    b.HasOne("LegalService.API.Models.Entities.User", null)
+                        .WithMany()
+                        .HasForeignKey("ClientId")
+                        .OnDelete(DeleteBehavior.SetNull);
                 });
 
             modelBuilder.Entity("LegalService.API.Models.Entities.LawyerSpecialization", b =>

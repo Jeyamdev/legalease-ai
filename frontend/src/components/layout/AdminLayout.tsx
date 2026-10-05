@@ -1,5 +1,7 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
+import { UsersRound } from "lucide-react";
+import { adminWorkflowRoutes } from "../../routes/adminWorkflowRoutes";
 import { documentationApi } from "../../api/documentationApi";
 import { authApi } from "../../api/authApi";
 
@@ -40,6 +42,11 @@ const navItems = [
         <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />
       </svg>
     ),
+  },
+  {
+    label: "AI Lawyer Matching",
+    path: adminWorkflowRoutes.lawyerMatching,
+    icon: <UsersRound className="w-4 h-4" strokeWidth={1.8} aria-hidden="true" />,
   },
   {
     label: "Clerk Management",
@@ -110,7 +117,10 @@ const navItems = [
   },
 ];
 
+let restoreSidebarFocusAfterNavigation = false;
+
 export const AdminLayout: React.FC<AdminLayoutProps> = ({ children, title, subtitle, showStats = true, responsiveNavigation = false }) => {
+  const sidebarToggle = useRef<HTMLButtonElement>(null);
   const location = useLocation();
   const navigate = useNavigate();
   const currentAdmin = authApi.getCurrentAdmin();
@@ -120,6 +130,13 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children, title, subti
   const [currentTime, setCurrentTime] = useState<Date>(new Date());
   const [sidebarOpen, setSidebarOpen] = useState(() =>
     responsiveNavigation && typeof window !== "undefined" ? window.matchMedia("(min-width: 768px)").matches : true);
+
+  useLayoutEffect(() => {
+    if (restoreSidebarFocusAfterNavigation) {
+      sidebarToggle.current?.focus();
+      restoreSidebarFocusAfterNavigation = false;
+    }
+  }, [location.pathname]);
 
   // Live real-time clock updating every second
   useEffect(() => {
@@ -201,6 +218,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children, title, subti
           {/* Left: Brand + Toggle */}
           <div className={`flex items-center ${responsiveNavigation ? "gap-2 md:gap-4" : "gap-4"}`}>
             <button
+              ref={sidebarToggle}
               onClick={() => setSidebarOpen(o => !o)}
               className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-900 transition-colors cursor-pointer"
               aria-label="Toggle sidebar"
@@ -336,12 +354,18 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children, title, subti
               <span className="w-1.5 h-1.5 rounded-full bg-slate-700" />
             </div>
             {navItems.map(item => {
-              const isActive = location.pathname.startsWith(item.path);
+              const isActive = location.pathname === item.path || location.pathname.startsWith(`${item.path}/`);
               return (
                 <Link
                   key={item.path}
                   to={item.path}
-                  onClick={() => { if (responsiveNavigation && window.matchMedia("(max-width: 767px)").matches) setSidebarOpen(false); }}
+                  aria-current={isActive ? "page" : undefined}
+                  onClick={() => {
+                    if (responsiveNavigation && window.matchMedia("(max-width: 767px)").matches) {
+                      restoreSidebarFocusAfterNavigation = true;
+                      setSidebarOpen(false);
+                    }
+                  }}
                   className={`flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-semibold transition-all duration-200 group relative ${
                     isActive
                       ? "bg-gradient-to-r from-amber-500/20 via-amber-500/10 to-transparent text-amber-300 border border-amber-500/30 shadow-xs font-bold"

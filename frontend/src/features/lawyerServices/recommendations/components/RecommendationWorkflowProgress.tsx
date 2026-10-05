@@ -14,5 +14,5 @@ export function RecommendationWorkflowProgress({ result, busy = false, approving
   return <AIWorkflowProgress ariaLabel="Recommendation workflow progress" stages={stages} title={title}
     description={analysing ? "Analysing the requirement against the supported catalog. Confirmed interpretation, eligibility and ranking will appear together when analysis finishes." : "AI interprets the requirement. The system validates and ranks eligible lawyers. An administrator selects the lawyer and approves the appointment."}
     shortLabels={{ requirement: "Requirement", interpretation: "AI", catalog: "Catalog", candidates: "Candidates", availability: "Availability", ranking: "Ranking", validation: "Validation", review: "Review", appointment: "Appointment" }}
-    responsibilities={{ system: "Catalog, eligibility, availability, ranking and validation", ai: "Legal requirement interpretation", human: "Lawyer selection and appointment approval" }} />;
+    responsibilities={{ system: "Client records, catalog, eligibility, availability, ranking and booking validation", ai: "Legal requirement interpretation", human: "Client intake, lawyer selection and appointment approval" }} />;
 }

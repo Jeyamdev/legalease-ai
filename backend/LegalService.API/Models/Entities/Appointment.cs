@@ -11,6 +11,7 @@ public class Appointment
     public Guid SlotId { get; set; }
     public string Status { get; set; } = string.Empty;
     public string? Description { get; set; }
+    public string? AppointmentSource { get; set; }
     public string ConsultationType { get; set; } = "Online";
     public string? LegalServiceCategory { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;

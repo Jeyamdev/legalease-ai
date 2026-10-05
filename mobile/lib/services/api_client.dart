@@ -8,6 +8,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../config/api_config.dart';
 
 class ApiClient {
+  static Future<void> Function()? onSessionExpired;
+  static http.Client client = http.Client();
   static const String _tokenKey = 'auth_token';
   static const Duration requestTimeout = Duration(seconds: 60);
 
@@ -52,14 +54,21 @@ class ApiClient {
 
     try {
       final headers = await _getHeaders();
-      final response = await http.get(uri, headers: headers).timeout(timeout ?? requestTimeout);
+      final response = await client
+          .get(uri, headers: headers)
+          .timeout(timeout ?? requestTimeout);
       return _handleResponse(response);
     } on TimeoutException {
       if (customBaseUrl == null) {
         final failover = _getFailoverUrl(baseUrl);
         if (failover != null) {
           try {
-            final res = await get(endpoint, queryParams: queryParams, customBaseUrl: failover, timeout: const Duration(seconds: 5));
+            final res = await get(
+              endpoint,
+              queryParams: queryParams,
+              customBaseUrl: failover,
+              timeout: const Duration(seconds: 5),
+            );
             _applyFailoverSuccess(failover);
             return res;
           } catch (_) {}
@@ -74,7 +83,12 @@ class ApiClient {
         final failover = _getFailoverUrl(baseUrl);
         if (failover != null) {
           try {
-            final res = await get(endpoint, queryParams: queryParams, customBaseUrl: failover, timeout: const Duration(seconds: 5));
+            final res = await get(
+              endpoint,
+              queryParams: queryParams,
+              customBaseUrl: failover,
+              timeout: const Duration(seconds: 5),
+            );
             _applyFailoverSuccess(failover);
             return res;
           } catch (_) {}
@@ -96,6 +110,7 @@ class ApiClient {
     Map<String, String>? queryParams,
     String? customBaseUrl,
     Duration? timeout,
+    bool retryOnConnectionFailure = true,
   }) async {
     final baseUrl = customBaseUrl ?? ApiConfig.backendUrl.value;
     var uri = Uri.parse('$baseUrl$endpoint');
@@ -105,7 +120,7 @@ class ApiClient {
 
     try {
       final headers = await _getHeaders();
-      final response = await http
+      final response = await client
           .post(
             uri,
             headers: headers,
@@ -114,11 +129,17 @@ class ApiClient {
           .timeout(timeout ?? requestTimeout);
       return _handleResponse(response);
     } on TimeoutException {
-      if (customBaseUrl == null) {
+      if (customBaseUrl == null && retryOnConnectionFailure) {
         final failover = _getFailoverUrl(baseUrl);
         if (failover != null) {
           try {
-            final res = await post(endpoint, body, queryParams: queryParams, customBaseUrl: failover, timeout: const Duration(seconds: 5));
+            final res = await post(
+              endpoint,
+              body,
+              queryParams: queryParams,
+              customBaseUrl: failover,
+              timeout: const Duration(seconds: 5),
+            );
             _applyFailoverSuccess(failover);
             return res;
           } catch (_) {}
@@ -129,11 +150,17 @@ class ApiClient {
         408,
       );
     } on SocketException catch (e) {
-      if (customBaseUrl == null) {
+      if (customBaseUrl == null && retryOnConnectionFailure) {
         final failover = _getFailoverUrl(baseUrl);
         if (failover != null) {
           try {
-            final res = await post(endpoint, body, queryParams: queryParams, customBaseUrl: failover, timeout: const Duration(seconds: 5));
+            final res = await post(
+              endpoint,
+              body,
+              queryParams: queryParams,
+              customBaseUrl: failover,
+              timeout: const Duration(seconds: 5),
+            );
             _applyFailoverSuccess(failover);
             return res;
           } catch (_) {}
@@ -149,24 +176,71 @@ class ApiClient {
     }
   }
 
+  // Mutations are not automatically retried: the server may already have committed.
+  static Future<dynamic> put(String endpoint, dynamic body) async {
+    try {
+      final response = await client
+          .put(
+            Uri.parse('${ApiConfig.backendUrl.value}$endpoint'),
+            headers: await _getHeaders(),
+            body: jsonEncode(body),
+          )
+          .timeout(requestTimeout);
+      return _handleResponse(response);
+    } on TimeoutException {
+      throw ApiException(
+        'The request timed out. Refresh before trying again.',
+        408,
+      );
+    } on SocketException {
+      throw ApiException('Unable to reach the server.', 503);
+    }
+  }
+
+  static Future<dynamic> delete(String endpoint) async {
+    try {
+      final response = await client
+          .delete(
+            Uri.parse('${ApiConfig.backendUrl.value}$endpoint'),
+            headers: await _getHeaders(),
+          )
+          .timeout(requestTimeout);
+      return _handleResponse(response);
+    } on TimeoutException {
+      throw ApiException(
+        'The request timed out. Refresh before trying again.',
+        408,
+      );
+    } on SocketException {
+      throw ApiException('Unable to reach the server.', 503);
+    }
+  }
+
   static String? _getFailoverUrl(String currentUrl) {
     if (kIsWeb) return null;
-    final lanHost = Uri.tryParse(ApiConfig.lanBackendUrl)?.host ?? '10.88.177.23';
+    final lanHost =
+        Uri.tryParse(ApiConfig.lanBackendUrl)?.host ?? '10.88.177.23';
     if (currentUrl.contains('localhost') || currentUrl.contains('127.0.0.1')) {
-      return currentUrl.replaceAll('localhost', lanHost).replaceAll('127.0.0.1', lanHost);
+      return currentUrl
+          .replaceAll('localhost', lanHost)
+          .replaceAll('127.0.0.1', lanHost);
     }
-    if (currentUrl.contains(lanHost) || currentUrl.contains('172.27.62.23') || currentUrl.contains('10.164.')) {
+    if (currentUrl.contains(lanHost) ||
+        currentUrl.contains('172.27.62.23') ||
+        currentUrl.contains('10.164.')) {
       return ApiConfig.defaultBackendUrl;
     }
     return null;
   }
 
   static void _applyFailoverSuccess(String failoverUrl) {
-    final lanHost = Uri.tryParse(ApiConfig.lanBackendUrl)?.host ?? '10.88.177.23';
+    final lanHost =
+        Uri.tryParse(ApiConfig.lanBackendUrl)?.host ?? '10.88.177.23';
     if (failoverUrl.contains(lanHost)) {
       ApiConfig.setBackendUrl(ApiConfig.lanBackendUrl);
       ApiConfig.setAiServiceUrl(ApiConfig.lanAiUrl);
-    } else if (failoverUrl.contains('localhost') || failoverUrl.contains('127.0.0.1')) {
+    } else if (failoverUrl.contains('localhost') ||
+        failoverUrl.contains('127.0.0.1')) {
       ApiConfig.setBackendUrl(ApiConfig.defaultBackendUrl);
       ApiConfig.setAiServiceUrl(ApiConfig.defaultAiUrl);
     }
@@ -206,26 +280,35 @@ class ApiClient {
       }
 
       if (fileBytes != null) {
-        request.files.add(http.MultipartFile.fromBytes(
-          fileFieldName,
-          fileBytes,
-          filename: fileName,
-          contentType: mediaType,
-        ));
+        request.files.add(
+          http.MultipartFile.fromBytes(
+            fileFieldName,
+            fileBytes,
+            filename: fileName,
+            contentType: mediaType,
+          ),
+        );
       } else if (filePath != null) {
-        request.files.add(await http.MultipartFile.fromPath(
-          fileFieldName,
-          filePath,
-          filename: fileName,
-          contentType: mediaType,
-        ));
+        request.files.add(
+          await http.MultipartFile.fromPath(
+            fileFieldName,
+            filePath,
+            filename: fileName,
+            contentType: mediaType,
+          ),
+        );
       }
 
-      final streamedResponse = await request.send().timeout(const Duration(seconds: 25));
+      final streamedResponse = await request.send().timeout(
+        const Duration(seconds: 25),
+      );
       final response = await http.Response.fromStream(streamedResponse);
       return _handleResponse(response);
     } on TimeoutException {
-      throw ApiException('File upload timed out. Please check connection.', 408);
+      throw ApiException(
+        'File upload timed out. Please check connection.',
+        408,
+      );
     } on SocketException catch (e) {
       throw ApiException('Cannot reach server for upload: ${e.message}', 503);
     } catch (e) {
@@ -243,18 +326,25 @@ class ApiClient {
         return response.body;
       }
     } else {
+      if (response.statusCode == 401 &&
+          response.request?.url.path != '/api/auth/login') {
+        unawaited(onSessionExpired?.call());
+      }
+      Object? conflicts;
       String message = 'Server error (${response.statusCode})';
       try {
         final decoded = jsonDecode(response.body);
-        if (decoded is Map && decoded['message'] != null) {
-          message = decoded['message'].toString();
+        if (decoded is Map) {
+          message = (decoded['message'] ?? decoded['title'] ?? message)
+              .toString();
+          conflicts = decoded['conflicts'];
         } else {
           message = response.body;
         }
       } catch (_) {
         if (response.body.isNotEmpty) message = response.body;
       }
-      throw ApiException(message, response.statusCode);
+      throw ApiException(message, response.statusCode, conflicts);
     }
   }
 }
@@ -262,7 +352,8 @@ class ApiClient {
 class ApiException implements Exception {
   final String message;
   final int statusCode;
-  ApiException(this.message, this.statusCode);
+  final Object? conflicts;
+  ApiException(this.message, this.statusCode, [this.conflicts]);
 
   @override
   String toString() => message;

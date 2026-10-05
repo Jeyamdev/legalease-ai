@@ -289,7 +289,7 @@ public class LawyersController : ControllerBase
 
         var user = new User
         {
-            Name = lawyer.Name, Email = normalizedEmail, Role = "Lawyer",
+            Name = lawyer.Name, Email = normalizedEmail, Role = "Lawyer", MustChangePassword = true,
             PasswordHash = passwordHash, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow
         };
 

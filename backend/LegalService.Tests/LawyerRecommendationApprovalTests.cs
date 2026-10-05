@@ -26,7 +26,7 @@ public class LawyerRecommendationApprovalTests
         var date = new DateOnly(2030, 1, 7);
         var workflow = new LawyerRecommendationWorkflow
         {
-            WorkflowId = Guid.NewGuid(), OwnerUserId = 7, Status = "AWAITING_APPROVAL",
+            WorkflowId = Guid.NewGuid(), ClientId = 42, SelectedLawyerId = lawyerId, SelectedSlotId = slotId, ReviewStage = "APPOINTMENT", OwnerUserId = 7, Status = "AWAITING_APPROVAL",
             UserRequirement = "Synthetic property dispute", CategoryId = 3, RequestedDate = date,
             ParsedRequirementJson = JsonSerializer.Serialize(new ParsedLegalRequirement("Synthetic property dispute", 3, "Property Law", null, null, [])),
             RecommendationsJson = JsonSerializer.Serialize(new[] { new Recommendation(lawyerId, 55, "Recorded category match") })

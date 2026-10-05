@@ -12,7 +12,7 @@ export const LawyerLayout: React.FC<LawyerLayoutProps> = ({ children }) => {
 
   const handleLogout = () => {
     authApi.logoutLawyer?.();
-    navigate("/lawyer/login");
+    navigate("/login");
   };
 
   return (

@@ -37,7 +37,7 @@ public sealed class RecommendationLiveTransportTests
         var service=new RecommendationService(client,config,f.Db,f.Booking.Object,NullLogger<RecommendationService>.Instance);
         try
         {
-            var response=await service.RecommendAsync(new() { Requirement="issue with land document", Date=DateOnly.FromDateTime(DateTime.UtcNow), Limit=5 },7,default);
+            var response=await service.RecommendAsync(new() { ClientId = 42, Requirement="issue with land document", Date=DateOnly.FromDateTime(DateTime.UtcNow), Limit=5 },7,default);
             Assert.Equal("Real Estate & Property Law",response.ParsedRequirement!.CategoryName);
             Assert.NotNull(response.WorkflowId);
         }

@@ -20,6 +20,9 @@ public class BookAppointmentRequest
     [MaxLength(2000)]
     public string? Description { get; set; }
 
+    [RegularExpression("^(CLIENT_PORTAL|FRONT_DESK|AI_FRONT_DESK|ADMIN)$")]
+    public string? AppointmentSource { get; set; }
+
     public string ConsultationType { get; set; } = "Online";
 
     public string? LegalServiceCategory { get; set; }

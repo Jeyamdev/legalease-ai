@@ -34,6 +34,9 @@ public sealed class LawyerRecommendationsController(ILawyerRecommendationService
         }));
     }
 
+    [HttpPut("{workflowId:guid}/review")]
+    public async Task<IActionResult> Review(Guid workflowId, SaveRecommendationReviewRequest request, CancellationToken ct) => Ok(await service.SaveReviewAsync(workflowId, request, UserId, ct));
+
     [HttpPost("{workflowId:guid}/approve")]
     public async Task<IActionResult> Approve(Guid workflowId, ApproveRecommendationRequest request, CancellationToken ct)
         => Ok(await service.ApproveAsync(workflowId, request, UserId, ct));

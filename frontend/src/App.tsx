@@ -16,6 +16,7 @@ import { AppointmentsPage } from "./pages/admin/AppointmentsPage";
 import { lawyerLegalServicesRoutes } from "./routes/LawyerLegalServicesRoutes";
 
 import { ClerkCasesPage } from "./pages/clerk/ClerkCasesPage";
+import { LawyerPasswordPage } from "./pages/lawyer/LawyerPasswordPage";
 import { LawyerDashboardPage } from "./pages/lawyer/LawyerDashboardPage";
 
 import { CareersPublicPage } from "./pages/public/CareersPublicPage";
@@ -121,6 +122,8 @@ function App() {
             </LawyerRoute>
           }
         />
+
+        <Route path="/lawyer/change-password" element={<LawyerRoute allowPasswordSetup><LawyerPasswordPage /></LawyerRoute>} />
 
         {/* =========================================================
             ADMIN PORTAL

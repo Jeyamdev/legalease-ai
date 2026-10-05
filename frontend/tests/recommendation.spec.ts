@@ -1,3 +1,4 @@
+import { frontDeskFixture, selectIntakeClient } from './frontDeskFixture';
 import { expect, test } from "@playwright/test";
 
 const admin = { userId: 1, name: "Test Admin", email: "admin@example.test", role: "Admin" };
@@ -6,7 +7,7 @@ const date = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(
 const trace = ["received", "parse_requirement", "validate_category", "search_lawyers", "rank_candidates", "backend_validation"]
   .map(step => ({ step, status: "completed", timestamp: new Date().toISOString(), summary: `${step} completed` }));
 const prepared = {
-  workflowId: "workflow-1", status: "AWAITING_APPROVAL", userRequirement: "I have a dispute about ownership of my land.",
+  clientId: 42, workflowId: "workflow-1", status: "AWAITING_APPROVAL", userRequirement: "I have a dispute about ownership of my land.",
   date, appointmentId: null, parsedRequirement: { requirement: "land ownership dispute", categoryName: "Real Estate & Property Law" },
   recommendations: [{ lawyerId: "lawyer-1", score: 8, reason: "Matching Practice Area and recorded experience", fullName: "Nimal Perera", qualification: "Attorney-at-Law", yearsExperience: 8, practiceArea: "Real Estate & Property Law" }],
   warnings: [], trace,
@@ -49,8 +50,8 @@ test("recommendation is visible, waits for human approval, and restores by workf
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
   });
 
-  await page.goto("/admin/lawyer-services/recommendations");
-  await page.getByLabel("Legal requirement").fill(prepared.userRequirement);
+  await frontDeskFixture(page, () => completed ? { ...prepared, status: "ACTION_COMPLETED", appointmentId: "appointment-1" } : prepared); await page.goto("/admin/lawyer-matching");
+  await selectIntakeClient(page); await page.getByLabel("Legal requirement").fill(prepared.userRequirement);
   await page.getByLabel("Preferred date").fill(date);
   await page.getByRole("button", { name: "Analyse Requirement" }).click();
   await expect(page).toHaveURL(/\?workflow=workflow-1$/);
@@ -69,7 +70,7 @@ test("recommendation is visible, waits for human approval, and restores by workf
 
   await page.getByRole("button", { name: "Select Lawyer" }).click();
   await page.getByRole("button", { name: "Continue to Appointment" }).click();
-  await page.getByRole("combobox", { name: "Customer" }).selectOption("customer-1");
+
   await page.getByRole("combobox", { name: "Available slot" }).selectOption("slot-1");
   await page.getByRole("button", { name: "Approve & Create Appointment" }).click();
   await expect(page.getByRole("heading", { name: "Appointment Created" })).toBeVisible();
@@ -91,14 +92,12 @@ test("true AI unavailability shows a safe error without recommendations or appro
     const path = new URL(route.request().url()).pathname;
     if (path.startsWith("/api/appointments")) appointments++;
     if (path === "/api/lawyer-recommendations") {
-      if (new URL(route.request().url()).pathname.endsWith('/available-slots') && Array.isArray(body)) body = { date: new URL(route.request().url()).searchParams.get('date'), workingDay: true, appointmentDurationMinutes: 30, timeZone: 'Asia/Colombo', availableSlots: body.filter(slot => !slot.isBooked && slot.date === new URL(route.request().url()).searchParams.get('date')).map(slot => ({ slotId: slot.slotId, start: slot.startTime, end: slot.endTime })) };
     await route.fulfill({ status: 503, json: { title: "Requirement understanding is temporarily unavailable." } }); return;
     }
-    if (new URL(route.request().url()).pathname.endsWith('/available-slots') && Array.isArray(body)) body = { date: new URL(route.request().url()).searchParams.get('date'), workingDay: true, appointmentDurationMinutes: 30, timeZone: 'Asia/Colombo', availableSlots: body.filter(slot => !slot.isBooked && slot.date === new URL(route.request().url()).searchParams.get('date')).map(slot => ({ slotId: slot.slotId, start: slot.startTime, end: slot.endTime })) };
     await route.fulfill({ json: path.endsWith("/summary") ? { activeLawyers: 1, totalLawyers: 1, practiceAreas: 1, legalServices: 1, coverage: [] } : [] });
   });
-  await page.goto("/admin/lawyer-services/recommendations");
-  await page.getByLabel("Legal requirement").fill("issue with land document");
+  await frontDeskFixture(page, () => prepared); await page.goto("/admin/lawyer-matching");
+  await selectIntakeClient(page); await page.getByLabel("Legal requirement").fill("issue with land document");
   await page.getByRole("button", { name: "Analyse Requirement" }).click();
   await expect(page.getByRole("alert")).toContainText("No lawyer recommendation was generated.");
   await expect(page.getByRole("button", { name: "Select Lawyer" })).toHaveCount(0);

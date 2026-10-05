@@ -43,6 +43,7 @@ builder.Services.AddScoped<IDocumentationServiceService, DocumentationServiceSer
 builder.Services.AddScoped<IDocumentationRequestService, DocumentationRequestService>();
 builder.Services.AddScoped<IDocumentFileService, DocumentFileService>();
 builder.Services.AddScoped<ICareerService, CareerService>();
+builder.Services.AddScoped<LegalService.API.Services.Clients.ClientService>();
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddOptions<WorkforceOptions>().BindConfiguration("Workforce")
     .Validate(o => o.RecentWindowDays is > 0 and <= 365 && o.FutureWindowDays is > 0 and <= 365 &&
@@ -85,7 +86,7 @@ builder.Services.AddCors(options =>
 // ================================================================
 // Controllers & JSON Serialization
 // ================================================================
-builder.Services.AddControllers()
+builder.Services.AddControllers(options => options.Filters.Add<LegalService.API.Infrastructure.LawyerAccessFilter>())
     .AddJsonOptions(options =>
     {
         options.JsonSerializerOptions.PropertyNameCaseInsensitive = true;
@@ -232,7 +233,7 @@ if (args.Contains("--seed-demo-lawyers") || args.Contains("--seed-demo-schedulin
 // HTTP Pipeline Configuration
 // ================================================================
 app.UseMiddleware<ExceptionMiddleware>();
-app.UseWhen(context => (context.Request.Path.StartsWithSegments("/api/lawyer-recommendations") || context.Request.Path.StartsWithSegments("/api/workforce-analysis") || context.Request.Path.StartsWithSegments("/api/careers") || context.Request.Path.StartsWithSegments("/api/workforce-settings") || context.Request.Path.StartsWithSegments("/api/dev/workforce-demo") || context.Request.Path.StartsWithSegments("/api/lawyers") || context.Request.Path.StartsWithSegments("/api/appointments")), branch => branch.UseExceptionHandler());
+app.UseWhen(context => (context.Request.Path.StartsWithSegments("/api/lawyer-recommendations") || context.Request.Path.StartsWithSegments("/api/workforce-analysis") || context.Request.Path.StartsWithSegments("/api/careers") || context.Request.Path.StartsWithSegments("/api/workforce-settings") || context.Request.Path.StartsWithSegments("/api/clients") || context.Request.Path.StartsWithSegments("/api/dev/workforce-demo") || context.Request.Path.StartsWithSegments("/api/lawyers") || context.Request.Path.StartsWithSegments("/api/lawyer") || context.Request.Path.StartsWithSegments("/api/auth") || context.Request.Path.StartsWithSegments("/api/appointments")), branch => branch.UseExceptionHandler());
 
 if (app.Environment.IsDevelopment())
 {

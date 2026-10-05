@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'session_router.dart';
+import '../services/api_client.dart';
 import 'package:http/http.dart' as http;
 import '../../config/app_theme.dart';
 import '../../config/api_config.dart';
@@ -6,15 +8,11 @@ import '../../widgets/server_settings_dialog.dart';
 import '../screens/careers/careers_screen.dart';
 import 'auth_service.dart';
 import 'register_screen.dart';
-import '../screens/main_navigation_screen.dart';
 
 class LoginScreen extends StatefulWidget {
   final bool asModal;
 
-  const LoginScreen({
-    super.key,
-    this.asModal = false,
-  });
+  const LoginScreen({super.key, this.asModal = false});
 
   @override
   State<LoginScreen> createState() => _LoginScreenState();
@@ -77,8 +75,6 @@ class _LoginScreenState extends State<LoginScreen> {
     super.dispose();
   }
 
-  
-
   Widget _buildServerBadge() {
     Color bgColor;
     Color fgColor;
@@ -133,28 +129,25 @@ class _LoginScreenState extends State<LoginScreen> {
             Expanded(
               child: Text(
                 _serverStatusText,
-                style: TextStyle(fontSize: 12, color: fgColor, fontWeight: FontWeight.w500),
+                style: TextStyle(
+                  fontSize: 12,
+                  color: fgColor,
+                  fontWeight: FontWeight.w500,
+                ),
               ),
             ),
-            if (_serverStatus == _ServerStatus.offline) ...
-              [
-                const SizedBox(width: 4),
-                Icon(Icons.settings_rounded, size: 14, color: fgColor),
-              ]
-            else if (_serverStatus == _ServerStatus.online) ...
-              [
-                const SizedBox(width: 4),
-                IconButton(
-                  padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(),
-                  onPressed: _checkServer,
-                  icon: Icon(
-                    Icons.refresh_rounded,
-                    size: 14,
-                    color: fgColor,
-                  ),
-                )
-              ],
+            if (_serverStatus == _ServerStatus.offline) ...[
+              const SizedBox(width: 4),
+              Icon(Icons.settings_rounded, size: 14, color: fgColor),
+            ] else if (_serverStatus == _ServerStatus.online) ...[
+              const SizedBox(width: 4),
+              IconButton(
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(),
+                onPressed: _checkServer,
+                icon: Icon(Icons.refresh_rounded, size: 14, color: fgColor),
+              ),
+            ],
           ],
         ),
       ),
@@ -162,20 +155,15 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   Future<void> _handleLogin() async {
-
     if (!_formKey.currentState!.validate()) return;
 
-
     if (_serverStatus == _ServerStatus.offline) {
-
       setState(() {
-        _errorMessage =
-            "Server is unavailable. Please try again later.";
+        _errorMessage = "Server is unavailable. Please try again later.";
       });
 
       return;
     }
-
 
     setState(() {
       _loading = true;
@@ -183,48 +171,46 @@ class _LoginScreenState extends State<LoginScreen> {
     });
 
     try {
-      await AuthService.login(
+      final user = await AuthService.login(
         email: _emailController.text.trim(),
         password: _passwordController.text,
       );
 
       if (mounted) {
-        if (widget.asModal) {
+        if (widget.asModal && user.role.toLowerCase() == 'customer') {
           Navigator.pop(context, true);
         } else {
-          Navigator.pushReplacement(
+          Navigator.pushAndRemoveUntil(
             context,
-            MaterialPageRoute(builder: (_) => const MainNavigationScreen()),
+            MaterialPageRoute(builder: (_) => const SessionRouter()),
+            (_) => false,
           );
         }
       }
     } catch (e) {
       if (mounted) {
-
-        String message = "Login failed. Please try again.";
+        String message = e is ApiException
+            ? e.message
+            : e.toString().replaceFirst("Exception: ", "");
 
         final error = e.toString().toLowerCase();
 
         if (error.contains("401") ||
             error.contains("invalid email") ||
             error.contains("invalid password")) {
-
           message = "Invalid email or password.";
-
         } else if (error.contains("socket") ||
-              error.contains("connection") ||
-              error.contains("failed host") ||
-              error.contains("timeout")) {
-
+            error.contains("connection") ||
+            error.contains("failed host") ||
+            error.contains("timeout")) {
           message = "Unable to connect to server.";
-
         }
 
         setState(() {
           _errorMessage = message;
         });
       }
-  } finally {
+    } finally {
       if (mounted) {
         setState(() => _loading = false);
       }
@@ -235,7 +221,10 @@ class _LoginScreenState extends State<LoginScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Sign In', style: TextStyle(fontWeight: FontWeight.bold)),
+        title: const Text(
+          'Sign In',
+          style: TextStyle(fontWeight: FontWeight.bold),
+        ),
         leading: widget.asModal
             ? IconButton(
                 icon: const Icon(Icons.close),
@@ -318,8 +307,6 @@ class _LoginScreenState extends State<LoginScreen> {
                 ),
                 const SizedBox(height: 20),
 
-                
-
                 // Server Status Banner
                 _buildServerBadge(),
 
@@ -333,12 +320,19 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                     child: Row(
                       children: [
-                        const Icon(Icons.error_outline, color: Color(0xFFDC2626), size: 20),
+                        const Icon(
+                          Icons.error_outline,
+                          color: Color(0xFFDC2626),
+                          size: 20,
+                        ),
                         const SizedBox(width: 8),
                         Expanded(
                           child: Text(
                             _errorMessage!,
-                            style: const TextStyle(color: Color(0xFFB91C1C), fontSize: 13),
+                            style: const TextStyle(
+                              color: Color(0xFFB91C1C),
+                              fontSize: 13,
+                            ),
                           ),
                         ),
                       ],
@@ -356,13 +350,12 @@ class _LoginScreenState extends State<LoginScreen> {
                     border: OutlineInputBorder(),
                   ),
                   validator: (val) {
-
                     if (val == null || val.trim().isEmpty) {
                       return 'Please enter your email';
                     }
 
                     final emailRegex = RegExp(
-                      r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$'
+                      r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$',
                     );
 
                     if (!emailRegex.hasMatch(val.trim())) {
@@ -381,13 +374,20 @@ class _LoginScreenState extends State<LoginScreen> {
                     labelText: 'Password',
                     prefixIcon: const Icon(Icons.lock_outline),
                     suffixIcon: IconButton(
-                      icon: Icon(_obscurePassword ? Icons.visibility_off : Icons.visibility),
-                      onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
+                      icon: Icon(
+                        _obscurePassword
+                            ? Icons.visibility_off
+                            : Icons.visibility,
+                      ),
+                      onPressed: () =>
+                          setState(() => _obscurePassword = !_obscurePassword),
                     ),
                     border: const OutlineInputBorder(),
                   ),
                   validator: (val) {
-                    if (val == null || val.isEmpty) return 'Please enter your password';
+                    if (val == null || val.isEmpty) {
+                      return 'Please enter your password';
+                    }
                     return null;
                   },
                 ),
@@ -399,31 +399,53 @@ class _LoginScreenState extends State<LoginScreen> {
                     backgroundColor: AppTheme.gold,
                     foregroundColor: AppTheme.primaryNavy,
                     padding: const EdgeInsets.symmetric(vertical: 14),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
                     elevation: 0,
                   ),
                   child: _loading
                       ? const SizedBox(
                           width: 20,
                           height: 20,
-                          child: CircularProgressIndicator(strokeWidth: 2, color: AppTheme.primaryNavy),
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: AppTheme.primaryNavy,
+                          ),
                         )
-                      : const Text('Sign In', style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
+                      : const Text(
+                          'Sign In',
+                          style: TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
                 ),
                 const SizedBox(height: 16),
 
                 Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    const Text("Don't have an account?", style: TextStyle(color: AppTheme.textMuted)),
+                    const Text(
+                      "Don't have an account?",
+                      style: TextStyle(color: AppTheme.textMuted),
+                    ),
                     TextButton(
                       onPressed: () {
                         Navigator.push(
                           context,
-                          MaterialPageRoute(builder: (_) => const RegisterScreen()),
+                          MaterialPageRoute(
+                            builder: (_) => const RegisterScreen(),
+                          ),
                         );
                       },
-                      child: const Text('Register', style: TextStyle(fontWeight: FontWeight.bold, color: AppTheme.primaryNavy)),
+                      child: const Text(
+                        'Register',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: AppTheme.primaryNavy,
+                        ),
+                      ),
                     ),
                   ],
                 ),
@@ -463,10 +485,15 @@ class _LoginScreenState extends State<LoginScreen> {
                     decoration: BoxDecoration(
                       color: Colors.white,
                       borderRadius: BorderRadius.circular(16),
-                      border: Border.all(color: AppTheme.secondaryAmber.withValues(alpha: 0.7), width: 1.5),
+                      border: Border.all(
+                        color: AppTheme.secondaryAmber.withValues(alpha: 0.7),
+                        width: 1.5,
+                      ),
                       boxShadow: [
                         BoxShadow(
-                          color: AppTheme.secondaryAmber.withValues(alpha: 0.12),
+                          color: AppTheme.secondaryAmber.withValues(
+                            alpha: 0.12,
+                          ),
                           blurRadius: 12,
                           offset: const Offset(0, 4),
                         ),
@@ -477,10 +504,16 @@ class _LoginScreenState extends State<LoginScreen> {
                         Container(
                           padding: const EdgeInsets.all(10),
                           decoration: BoxDecoration(
-                            color: AppTheme.secondaryAmber.withValues(alpha: 0.18),
+                            color: AppTheme.secondaryAmber.withValues(
+                              alpha: 0.18,
+                            ),
                             borderRadius: BorderRadius.circular(12),
                           ),
-                          child: const Icon(Icons.work_outline_rounded, color: AppTheme.primaryNavy, size: 22),
+                          child: const Icon(
+                            Icons.work_outline_rounded,
+                            color: AppTheme.primaryNavy,
+                            size: 22,
+                          ),
                         ),
                         const SizedBox(width: 14),
                         Expanded(
@@ -499,9 +532,14 @@ class _LoginScreenState extends State<LoginScreen> {
                                   ),
                                   const SizedBox(width: 6),
                                   Container(
-                                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 6,
+                                      vertical: 2,
+                                    ),
                                     decoration: BoxDecoration(
-                                      color: AppTheme.secondaryAmber.withValues(alpha: 0.2),
+                                      color: AppTheme.secondaryAmber.withValues(
+                                        alpha: 0.2,
+                                      ),
                                       borderRadius: BorderRadius.circular(6),
                                     ),
                                     child: const Text(
@@ -526,7 +564,11 @@ class _LoginScreenState extends State<LoginScreen> {
                             ],
                           ),
                         ),
-                        const Icon(Icons.arrow_forward_ios_rounded, size: 14, color: AppTheme.secondaryAmber),
+                        const Icon(
+                          Icons.arrow_forward_ios_rounded,
+                          size: 14,
+                          color: AppTheme.secondaryAmber,
+                        ),
                       ],
                     ),
                   ),

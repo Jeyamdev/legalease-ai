@@ -1,14 +1,15 @@
+import { frontDeskFixture } from './frontDeskFixture';
 import { expect, test, type Page } from "@playwright/test";
 
 const admin = { userId: 1, name: "Test Admin", email: "admin@example.test", role: "Admin" };
 const date = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
-const prepared = { workflowId: "saved-workflow", status: "AWAITING_APPROVAL", date,
+const prepared = { clientId: 42, workflowId: "saved-workflow", status: "AWAITING_APPROVAL", date,
   userRequirement: "My employer terminated me without proper notice.",
   parsedRequirement: { categoryName: "Labour & Employment Law" }, warnings: [], trace: [],
   recommendations: [{ lawyerId: "lawyer-1", fullName: "Verified Practitioner", practiceArea: "Labour & Employment Law", yearsExperience: 12, score: 12, reason: "12 years of recorded experience." }] };
 const api = /^https?:\/\/[^/]+\/api\//;
 const summary = { activeLawyers: 1, totalLawyers: 1, practiceAreas: 1, legalServices: 1, coverage: [] };
-const root = "/admin/lawyer-services/recommendations";
+const root = "/admin/lawyer-matching";
 async function signIn(page: Page) {
   await page.addInitScript(staff => {
     localStorage.setItem("legalease_staff_user", JSON.stringify(staff)); localStorage.setItem("token", "test-token");
@@ -33,10 +34,10 @@ test("stale slot rejection refreshes recorded slots and allows another valid slo
     if (new URL(route.request().url()).pathname.endsWith('/available-slots') && Array.isArray(body)) body = { date: new URL(route.request().url()).searchParams.get('date'), workingDay: true, appointmentDurationMinutes: 30, timeZone: 'Asia/Colombo', availableSlots: body.filter(slot => !slot.isBooked && slot.date === new URL(route.request().url()).searchParams.get('date')).map(slot => ({ slotId: slot.slotId, start: slot.startTime, end: slot.endTime })) };
     await route.fulfill({ status, contentType: "application/json", body: JSON.stringify(body) });
   });
-  await page.goto(root + "?workflow=saved-workflow");
+  await frontDeskFixture(page, () => prepared); await page.goto(root + "?workflow=saved-workflow");
   await page.getByRole("button", { name: "Select Lawyer" }).click();
   await page.getByRole("button", { name: "Continue to Appointment" }).click();
-  await page.getByLabel("Customer", { exact: true }).selectOption("customer-1");
+
   await page.getByRole("combobox", { name: "Available slot", exact: true }).selectOption("slot-1");
   await page.getByRole("button", { name: "Approve & Create Appointment" }).click();
   await expect(page.getByRole("alert")).toContainText("unavailable");
@@ -58,7 +59,7 @@ test("no-date result makes no availability claim and selects a real future slot"
     if (new URL(route.request().url()).pathname.endsWith('/available-slots') && Array.isArray(body)) body = { date: new URL(route.request().url()).searchParams.get('date'), workingDay: true, appointmentDurationMinutes: 30, timeZone: 'Asia/Colombo', availableSlots: body.filter(slot => !slot.isBooked && slot.date === new URL(route.request().url()).searchParams.get('date')).map(slot => ({ slotId: slot.slotId, start: slot.startTime, end: slot.endTime })) };
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
   });
-  await page.goto(root + "?workflow=saved-workflow");
+  await frontDeskFixture(page, () => ({ ...prepared, date: null })); await page.goto(root + "?workflow=saved-workflow");
   await expect(page.getByText("Availability Not Filtered.", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Select Lawyer" }).click();
   await page.getByRole("button", { name: "Continue to Appointment" }).click();
@@ -66,7 +67,7 @@ test("no-date result makes no availability claim and selects a real future slot"
   await page.getByLabel("Appointment date", { exact: true }).fill(date);
   await expect(page.getByRole("combobox", { name: "Available slot", exact: true }).locator('option[value="real-slot"]')).toHaveCount(1);
   await expect(page.getByRole("combobox", { name: "Available slot", exact: true }).locator('option[value="booked-slot"]')).toHaveCount(0);
-  await expect(page.getByText("No customer accounts match this search.")).toBeVisible();
+  await expect(page.getByRole("region", { name: "Client intake" })).toContainText("Existing Customer");
 });
 
 test("preferred-date workflow locks the date and requires a new recommendation to change it", async ({ page }) => {
@@ -74,9 +75,9 @@ test("preferred-date workflow locks the date and requires a new recommendation t
   await page.route(api, async route => {
     const path = new URL(route.request().url()).pathname;
     if (route.request().method() === "POST") creates++;
-    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(path.endsWith("/summary") ? summary : path.endsWith("saved-workflow") ? prepared : []) });
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(path.endsWith("/summary") ? summary : path.endsWith("saved-workflow") ? prepared : path.endsWith("/available-slots") ? { date, workingDay: true, appointmentDurationMinutes: 30, availableSlots: [] } : []) });
   });
-  await page.goto(root + "?workflow=saved-workflow");
+  await frontDeskFixture(page, () => prepared); await page.goto(root + "?workflow=saved-workflow");
   await page.getByRole("button", { name: "Select Lawyer" }).click();
   await page.getByRole("button", { name: "Continue to Appointment" }).click();
   await expect(page.getByLabel("Preferred date")).toHaveCount(0);
@@ -90,7 +91,7 @@ for (const status of ["UNSUPPORTED", "NO_MATCH"]) {
   test(`${status} shows an honest empty state without approval`, async ({ page }) => {
     await signIn(page);
     await page.route(api, route => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(new URL(route.request().url()).pathname.endsWith("/summary") ? summary : { ...prepared, status, recommendations: [], parsedRequirement: status === "UNSUPPORTED" ? { categoryName: null } : prepared.parsedRequirement }) }));
-    await page.goto(root + "?workflow=saved-workflow");
+    await frontDeskFixture(page, () => prepared); await page.goto(root + "?workflow=saved-workflow");
     await expect(page.getByText(status === "UNSUPPORTED" ? "No Supported Practice Area" : "No lawyers are available on the requested date.", { exact: status === "UNSUPPORTED" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Select Lawyer" })).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Approve & Create Appointment" })).toHaveCount(0);
@@ -101,10 +102,9 @@ test("missing workflow shows a retry state and cannot create a replacement on re
   await signIn(page); let creates = 0;
   await page.route(api, async route => {
     if (route.request().method() === "POST") creates++;
-    if (new URL(route.request().url()).pathname.endsWith('/available-slots') && Array.isArray(body)) body = { date: new URL(route.request().url()).searchParams.get('date'), workingDay: true, appointmentDurationMinutes: 30, timeZone: 'Asia/Colombo', availableSlots: body.filter(slot => !slot.isBooked && slot.date === new URL(route.request().url()).searchParams.get('date')).map(slot => ({ slotId: slot.slotId, start: slot.startTime, end: slot.endTime })) };
     await route.fulfill({ status: 404, contentType: "application/json", body: JSON.stringify({ message: "Not found" }) });
   });
-  await page.goto(root + "?workflow=missing");
+  await frontDeskFixture(page, () => prepared); await page.goto(root + "?workflow=missing");
   await expect(page.getByRole("alert").filter({ hasText: "Recommendation workflow not found" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Retry Workflow" })).toBeVisible();
   await page.reload(); await expect(page.getByRole("button", { name: "Retry Workflow" })).toBeVisible(); expect(creates).toBe(0);
@@ -127,7 +127,7 @@ test("lawyer form validates fields, submits one catalog ID, and displays backend
     if (new URL(route.request().url()).pathname.endsWith('/available-slots') && Array.isArray(body)) body = { date: new URL(route.request().url()).searchParams.get('date'), workingDay: true, appointmentDurationMinutes: 30, timeZone: 'Asia/Colombo', availableSlots: body.filter(slot => !slot.isBooked && slot.date === new URL(route.request().url()).searchParams.get('date')).map(slot => ({ slotId: slot.slotId, start: slot.startTime, end: slot.endTime })) };
     await route.fulfill({ status, contentType: "application/json", body: JSON.stringify(body) });
   });
-  await page.goto("/admin/lawyer-services/lawyers");
+  await frontDeskFixture(page, () => prepared); await page.goto("/admin/lawyer-services/lawyers");
   await page.getByRole("button", { name: "Add New Lawyer" }).first().click();
   const form = page.getByRole("dialog", { name: "Add New Legal Counsel" });
   await form.getByRole("button", { name: "Confirm & Add Lawyer" }).click();
@@ -153,14 +153,12 @@ test("catalog request shows loading, error with retry, and meaningful empty stat
     if (path.endsWith("/summary")) { await route.fulfill({ json: summary }); return; }
     if (path === "/api/specializations") {
       if (!loaded) { await loading; loaded = true; }
-      if (new URL(route.request().url()).pathname.endsWith('/available-slots') && Array.isArray(body)) body = { date: new URL(route.request().url()).searchParams.get('date'), workingDay: true, appointmentDurationMinutes: 30, timeZone: 'Asia/Colombo', availableSlots: body.filter(slot => !slot.isBooked && slot.date === new URL(route.request().url()).searchParams.get('date')).map(slot => ({ slotId: slot.slotId, start: slot.startTime, end: slot.endTime })) };
     await route.fulfill({ status: failing ? 500 : 200, json: failing ? { message: "Unavailable" } : [] });
       return;
     }
-    if (new URL(route.request().url()).pathname.endsWith('/available-slots') && Array.isArray(body)) body = { date: new URL(route.request().url()).searchParams.get('date'), workingDay: true, appointmentDurationMinutes: 30, timeZone: 'Asia/Colombo', availableSlots: body.filter(slot => !slot.isBooked && slot.date === new URL(route.request().url()).searchParams.get('date')).map(slot => ({ slotId: slot.slotId, start: slot.startTime, end: slot.endTime })) };
     await route.fulfill({ json: [] });
   });
-  await page.goto("/admin/lawyer-services/specializations");
+  await frontDeskFixture(page, () => prepared); await page.goto("/admin/lawyer-services/specializations");
   await expect(page.getByRole("status").filter({ hasText: "Loading Practice Areas" })).toBeVisible(); release!();
   await expect(page.getByRole("alert")).toContainText("Unable to load Practice Areas."); failing = false;
   await page.getByRole("button", { name: "Retry", exact: true }).click();
@@ -185,13 +183,13 @@ test("all four Admin screens remain usable at desktop and mobile widths", async 
   });
   for (const width of [1440, 1024, 768, 390, 320]) {
     await page.setViewportSize({ width, height: 900 });
-    for (const section of ["lawyers", "specializations", "legal-services", "recommendations"]) {
-      await page.goto(`/admin/lawyer-services/${section}${section === "recommendations" ? "?workflow=saved-workflow" : ""}`);
+    for (const section of ["lawyers", "specializations", "legal-services", "workforce-hiring"]) {
+      await frontDeskFixture(page, () => prepared); await page.goto(`/admin/lawyer-services/${section}${section === "recommendations" ? "?workflow=saved-workflow" : ""}`);
       await expect(page.getByRole("heading", { name: "Lawyer & Legal Service Management", exact: true })).toBeVisible();
       if (section === "lawyers") await expect(page.getByText("Verified Practitioner", { exact: true })).toBeVisible();
       if (section === "specializations") await expect(page.getByRole("heading", { name: area.name })).toBeVisible();
       if (section === "legal-services") await expect(page.getByText("Employment Contract Review", { exact: true })).toBeVisible();
-      if (section === "recommendations") await expect(page.getByLabel("12 Recommendation Points")).toBeVisible();
+      if (section === "workforce-hiring") await expect(page.getByRole("heading", { name: "Workforce & Hiring Intelligence" })).toBeVisible();
       const kpis = page.getByRole("region", { name: "Operational summary", exact: true });
       await expect(kpis).toHaveCount(1);
       await expect(kpis.getByRole("article")).toHaveCount(4);
@@ -214,7 +212,7 @@ test("all four Admin screens remain usable at desktop and mobile widths", async 
       })).toBe(true);
       if (section === "lawyers") await page.screenshot({ path: info.outputPath(`coverage-${width}.png`), fullPage: true });
       await page.getByRole("button", { name: "Coverage Overview", exact: true }).click();
-      if (section === "recommendations") await page.getByText("View Workflow Details", { exact: true }).click();
+
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
       if (width === 390) {
         expect(await page.locator("main").evaluate(element => element.getBoundingClientRect().width)).toBeGreaterThan(350);
@@ -243,7 +241,7 @@ test("coverage handles loading, unavailable retry and empty results without hidi
     if (new URL(route.request().url()).pathname.endsWith('/available-slots') && Array.isArray(body)) body = { date: new URL(route.request().url()).searchParams.get('date'), workingDay: true, appointmentDurationMinutes: 30, timeZone: 'Asia/Colombo', availableSlots: body.filter(slot => !slot.isBooked && slot.date === new URL(route.request().url()).searchParams.get('date')).map(slot => ({ slotId: slot.slotId, start: slot.startTime, end: slot.endTime })) };
     await route.fulfill({ json: [] });
   });
-  await page.goto("/admin/lawyer-services/specializations");
+  await frontDeskFixture(page, () => prepared); await page.goto("/admin/lawyer-services/specializations");
   const toggle = page.getByRole("button", { name: "Coverage Overview", exact: true });
   await toggle.focus(); await page.keyboard.press("Enter");
   await expect(toggle).toHaveAttribute("aria-expanded", "true");

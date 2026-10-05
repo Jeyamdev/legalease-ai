@@ -223,7 +223,7 @@ public static class DemoLawyerSeeder
             {
                 var account = new User
                 {
-                    Name = lawyer.Name, Email = email, Role = "Lawyer",
+                    Name = lawyer.Name, Email = email, Role = "Lawyer", MustChangePassword = true,
                     PasswordHash = passwords.HashPassword(DemoPassword),
                     CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow
                 };
@@ -309,22 +309,24 @@ public static class DemoLawyerSeeder
         while (demoDate.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday) demoDate = demoDate.AddDays(1);
         var addedAvailabilities = 0; var addedSlots = 0;
         var customerId = Guid.Parse($"00000000-0000-0000-0000-{customerUserId:x12}");
-        // Marker reasons/descriptions make repeat runs safe, even after the date moves on.
+        // Recognize legacy markers, but keep new Development records free of UI metadata.
         for (var scenario = 0; scenario < 4; scenario++)
         {
             var lawyer = seededLawyers[scenario];
             await new LegalService.API.Services.Scheduling.AvailabilityService(db).LockLawyerAsync(lawyer.LawyerId, ct); var marker = $"[Scheduling demo {scenario} {demoDate:yyyy-MM-dd}]";
             if (scenario < 2) {
-                if (await db.LawyerUnavailabilities.AnyAsync(r => r.LawyerId == lawyer.LawyerId && r.Reason.StartsWith(marker), ct)) continue;
+                var reason = scenario == 0 ? "Annual Leave" : "Court Appearance";
                 var start = demoDate.ToDateTime(scenario == 0 ? TimeOnly.MinValue : new TimeOnly(9, 0));
                 var end = scenario == 0 ? demoDate.AddDays(1).ToDateTime(TimeOnly.MinValue) : demoDate.ToDateTime(new(13, 0));
+                if (await db.LawyerUnavailabilities.AnyAsync(r => r.LawyerId == lawyer.LawyerId &&
+                    (r.Reason.StartsWith(marker) || r.Reason == reason && r.StartDateTime == start && r.EndDateTime == end), ct)) continue;
                 var conflicts = await db.Appointments.Where(a => a.LawyerId == lawyer.LawyerId && a.Status != "Cancelled" && a.Status != "Rejected" && a.AvailabilitySlot.LawyerAvailability.Date == demoDate)
                     .Select(a => new { a.AvailabilitySlot.StartTime, a.AvailabilitySlot.EndTime }).ToListAsync(ct);
                 if (conflicts.Any(a => LegalService.API.Services.Scheduling.AvailabilityService.Overlaps(start, end, demoDate.ToDateTime(a.StartTime), demoDate.ToDateTime(a.EndTime)))) continue;
                 db.LawyerUnavailabilities.Add(new() { LawyerId = lawyer.LawyerId, StartDateTime = start, EndDateTime = end,
-                    Reason = marker + (scenario == 0 ? " Annual Leave" : " Court Appearance"), IsFullDay = scenario == 0 });
+                    Reason = reason, IsFullDay = scenario == 0 });
             } else {
-                if (await db.Appointments.AnyAsync(a => a.LawyerId == lawyer.LawyerId && a.Description != null && a.Description.StartsWith(marker), ct)) continue;
+                if (await db.Appointments.AnyAsync(a => a.LawyerId == lawyer.LawyerId && (a.Description != null && a.Description.StartsWith(marker) || a.Description == null && a.AvailabilitySlot.LawyerAvailability.Date == demoDate), ct)) continue;
                 var scheduling = new LegalService.API.Services.Scheduling.AvailabilityService(db);
                 var available = await scheduling.GetAsync(lawyer.LawyerId, demoDate, ct);
                 var candidates = scenario == 2 ? available.AvailableSlots.Take(1) : available.AvailableSlots;
@@ -332,7 +334,7 @@ public static class DemoLawyerSeeder
                     var window = new LawyerAvailability { AvailabilityId = Guid.NewGuid(), LawyerId = lawyer.LawyerId, Date = demoDate, StartTime = slot.Start, EndTime = slot.End };
                     var stored = new AvailabilitySlot { SlotId = Guid.NewGuid(), LawyerAvailability = window, StartTime = slot.Start, EndTime = slot.End, IsBooked = true };
                     db.Appointments.Add(new() { AppointmentId = Guid.NewGuid(), LawyerId = lawyer.LawyerId, CustomerId = customerId,
-                        AvailabilitySlot = stored, Status = "Confirmed", Description = marker + " Development scheduling demonstration", CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow });
+                        AvailabilitySlot = stored, Status = "Confirmed", Description = null, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow });
                     addedAvailabilities++; addedSlots++;
                 }
             }

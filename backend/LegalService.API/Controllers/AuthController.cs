@@ -1,4 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Authorization;
+using System.Security.Claims;
+using LegalService.API.DTOs.LawyerMobile;
 using Microsoft.EntityFrameworkCore;
 using System.ComponentModel.DataAnnotations;
 using LegalService.API.Data;
@@ -118,6 +121,14 @@ public async Task<IActionResult> Register([FromBody] RegisterRequest request)
         // ---------------------------------------------------------
         // Lawyer validation BEFORE creating User
         // ---------------------------------------------------------
+
+        if (roleName == "Customer")
+        {
+            var customer = await new LegalService.API.Services.Clients.ClientService(_context, _passwordService).RegisterAsync(
+                new() { FullName = request.FullName, Email = request.Email, Password = request.Password });
+            await transaction.CommitAsync();
+            return Ok(new { message = "Customer registered successfully", userId = customer.UserId, name = customer.Name, email = customer.Email, role = "Customer", lawyerId = (string?)null });
+        }
 
         string? normalizedLicense = null;
 
@@ -378,6 +389,10 @@ public async Task<IActionResult> Register([FromBody] RegisterRequest request)
             role = user.Role
         });
     }
+    catch (LegalService.API.DTOs.Clients.DuplicateClientException)
+    { await transaction.RollbackAsync(); return BadRequest(new { message = "Email already exists." }); }
+    catch (LegalService.API.Infrastructure.ApiException error)
+    { await transaction.RollbackAsync(); return StatusCode(error.Status, new { message = error.Message }); }
     catch (DbUpdateException ex)
     {
         await transaction.RollbackAsync();
@@ -515,6 +530,9 @@ public async Task<IActionResult> Login([FromBody] LoginRequest request)
             });
         }
 
+        if (lawyer.Status != "Active")
+            return Unauthorized(new { message = lawyer.Status == "Pending"
+                ? "Your lawyer account is pending approval." : "Your lawyer account is inactive. Contact the administrator." });
         lawyerId = lawyer.LawyerId;
     }
 
@@ -582,9 +600,31 @@ public async Task<IActionResult> Login([FromBody] LoginRequest request)
         department,
         contact,
 
+        mustChangePassword = user.MustChangePassword,
         message = "Login successful"
     });
 }
+
+    [Authorize]
+    [HttpPost("change-password")]
+    public async Task<IActionResult> ChangePassword(ChangePasswordRequest request)
+    {
+        if (!int.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var id)) return Unauthorized();
+        var user = await _context.Users.SingleOrDefaultAsync(u => u.UserId == id);
+        if (user == null) return Unauthorized();
+        if (string.IsNullOrWhiteSpace(user.PasswordHash) || !_passwordService.VerifyPassword(request.CurrentPassword, user.PasswordHash))
+            return BadRequest(new { message = "The current password is incorrect." });
+        if (request.NewPassword != request.ConfirmPassword)
+            return BadRequest(new { message = "The new passwords do not match." });
+        if (request.CurrentPassword == request.NewPassword || System.Text.Encoding.UTF8.GetByteCount(request.NewPassword) > 72 ||
+            !request.NewPassword.Any(char.IsLetter) || !request.NewPassword.Any(char.IsDigit))
+            return BadRequest(new { message = "Use a different password with letters and numbers, at most 72 UTF-8 bytes." });
+        user.PasswordHash = _passwordService.HashPassword(request.NewPassword);
+        user.MustChangePassword = false;
+        user.UpdatedAt = DateTime.UtcNow;
+        await _context.SaveChangesAsync();
+        return Ok(new { message = "Password changed successfully.", mustChangePassword = false });
+    }
 
     /// <summary>
     /// Retrieve user profile by user ID.

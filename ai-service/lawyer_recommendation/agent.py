@@ -5,6 +5,8 @@ from datetime import date
 from typing import Protocol, TypedDict
 
 from langgraph.graph import END, START, StateGraph
+from pydantic import ValidationError
+from .gemini import ParsedRequirement
 
 
 class PlatformData(Protocol):
@@ -40,7 +42,12 @@ def build_recommendation_graph(data: PlatformData, classifier: Classifier | None
 
     async def parse_requirement(state: State):
         categories, services = await data.catalogs()
-        parsed = await classifier.classify(state['requirement'], categories, services)
+        raw = await classifier.classify(state['requirement'], categories, services)
+        try:
+            # Reject extra fields (including lawyer/customer/slot IDs) at the graph boundary too.
+            parsed = ParsedRequirement.model_validate(raw, strict=True, extra='forbid').model_dump()
+        except ValidationError:
+            raise InvalidClassification('Invalid structured legal interpretation') from None
         return {'parsedRequirement': parsed, 'trace': [{'step': 'parse_requirement', 'status': 'completed'}]}
 
     async def validate_category(state: State):
@@ -54,6 +61,17 @@ def build_recommendation_graph(data: PlatformData, classifier: Classifier | None
                 raise InvalidClassification('Gemini selected a category outside the current catalog')
         elif category_name is not None:
             raise InvalidClassification('Category name must be paired with a real category ID')
+        service_id = parsed.get('legalServiceId')
+        service_name = parsed.get('legalServiceName')
+        if service_id is not None:
+            matches = [s for s in services if s['id'] == service_id and s['name'] == service_name
+                       and category_id is not None
+                       and str(s.get('category', '')).casefold() == category_name.casefold()]
+            if len(matches) != 1:
+                raise InvalidClassification('Legal Service must belong to the verified Practice Area catalog')
+        elif service_name is not None:
+            raise InvalidClassification('Legal Service name must be paired with a real service ID')
+        parsed = {**parsed, 'supported': category_id is not None}
         parsed_date = parsed.get('preferredDate')
         if parsed_date is not None:
             try:
@@ -61,14 +79,22 @@ def build_recommendation_graph(data: PlatformData, classifier: Classifier | None
             except (TypeError, ValueError):
                 raise InvalidClassification('Gemini returned an invalid date') from None
         effective_date = state.get('date') or parsed_date
+        if effective_date:
+            try:
+                requested_date = date.fromisoformat(effective_date)
+            except (TypeError, ValueError):
+                raise InvalidClassification('Invalid requested date') from None
+            if requested_date < date.today():
+                raise InvalidClassification('Requested date must not be in the past')
         warnings = []
         if category_id is None:
             warnings.append('No supported Practice Area could be identified. No recommendation was generated.')
         if parsed.get('location'):
             warnings.append('Lawyer location is not recorded in this directory; location was not used for ranking.')
-        return {'specialization_ids': [category_id] if category_id is not None else [],
+        return {'parsedRequirement': parsed, 'specialization_ids': [category_id] if category_id is not None else [],
                 'date': effective_date, 'warnings': warnings,
                 'trace': state['trace'] + [{'step': 'validate_category', 'categoryId': category_id,
+                                           'legalServiceId': service_id,
                                            'status': 'completed' if category_id is not None else 'unsupported'}]}
 
     async def retrieve_lawyers(state: State):
@@ -80,16 +106,27 @@ def build_recommendation_graph(data: PlatformData, classifier: Classifier | None
         for lawyer in state['candidates']:
             if lawyer.get('status') != 'Active':
                 continue
-            specs = [s['name'] for s in lawyer.get('specializations', []) if s['id'] in state['specialization_ids']]
+            areas = lawyer.get('specializations', [])
+            if len(areas) != 1:
+                continue  # Ambiguous legacy records fail closed; never treat multiple areas as eligibility.
+            specs = [s['name'] for s in areas if s['id'] in state['specialization_ids']]
             if not specs:
+                continue
+            if state.get('date') and state['date'] not in lawyer.get('availableDates', []):
+                continue  # Filter before limit/ranking so an invalid record cannot displace a valid candidate.
+            experience = lawyer.get('experience')
+            if type(experience) is not int or not 0 <= experience <= 70:
                 continue
             reasons = []
             reasons.append('Practice Area match: ' + specs[0])
-            experience = max(0, int(lawyer.get('experience') or 0))
             reasons.append(f'{experience} years of recorded experience')
             if state.get('date'):
-                reasons.append(f"Unbooked slot recorded on {state['date']}; availability is rechecked at approval")
-            score = 50 + min(experience, 30) + (20 if state.get('date') else 0)
+                reasons.append(f"Bookable slot verified for requested date {state['date']}; availability is rechecked at approval")
+            else:
+                reasons.append('Availability Not Filtered: no preferred date supplied; check an actual slot before booking')
+            # Practice Area and requested-date availability are eligibility gates.
+            # Identical bonuses add no ranking value; recorded experience determines points.
+            score = experience
             ranked.append({'lawyerId': lawyer['lawyerId'], 'score': score, 'reason': '. '.join(reasons) + '.'})
         ranked.sort(key=lambda r: (-r['score'], r['lawyerId']))
         return {'recommendations': ranked[:state.get('limit', 5)],
@@ -102,7 +139,7 @@ def build_recommendation_graph(data: PlatformData, classifier: Classifier | None
             lawyer = candidates.get(item['lawyerId'])
             if not lawyer or lawyer.get('status') != 'Active':
                 continue
-            if not any(s['id'] in state['specialization_ids'] for s in lawyer.get('specializations', [])):
+            if len(lawyer.get('specializations', [])) != 1 or not any(s['id'] in state['specialization_ids'] for s in lawyer.get('specializations', [])):
                 continue
             if state.get('date') and state['date'] not in lawyer.get('availableDates', []):
                 continue

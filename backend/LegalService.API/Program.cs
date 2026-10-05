@@ -1,4 +1,5 @@
 using LegalService.API.Infrastructure;
+using LegalService.API.Services.Workforce;
 using LegalService.API.Services.Lawyers;
 using Microsoft.EntityFrameworkCore;
 using LegalService.API.Data;
@@ -42,6 +43,16 @@ builder.Services.AddScoped<IDocumentationServiceService, DocumentationServiceSer
 builder.Services.AddScoped<IDocumentationRequestService, DocumentationRequestService>();
 builder.Services.AddScoped<IDocumentFileService, DocumentFileService>();
 builder.Services.AddScoped<ICareerService, CareerService>();
+builder.Services.AddScoped<LegalService.API.Services.Clients.ClientService>();
+builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.AddOptions<WorkforceOptions>().BindConfiguration("Workforce")
+    .Validate(o => o.RecentWindowDays is > 0 and <= 365 && o.FutureWindowDays is > 0 and <= 365 &&
+        o.MinimumDemand > 0 && o.WatchRatio > 0 && o.ConcernRatio >= o.WatchRatio && o.SnapshotMaxAgeHours > 0,
+        "Workforce windows and thresholds must be positive and concern ratio must exceed watch ratio.").ValidateOnStart();
+builder.Services.AddScoped<WorkforceAnalysisService>();
+builder.Services.AddScoped<WorkforceSettingsService>();
+builder.Services.AddScoped<WorkforceDemoService>();
+builder.Services.AddHttpClient<HiringSuggestionService>(c => c.Timeout = TimeSpan.FromSeconds(45));
 builder.Services.AddScoped<IEmailNotificationService, EmailNotificationService>();
 
 // ================================================================
@@ -52,6 +63,8 @@ builder.Services.AddScoped<IServiceRequestService, ServiceRequestService>();
 // ================================================================
 // Appointment & Booking Management
 // ================================================================
+builder.Services.AddScoped<LegalService.API.Services.Scheduling.AvailabilityService>();
+builder.Services.AddScoped<LegalService.API.Services.Scheduling.LawyerScheduleService>();
 builder.Services.AddScoped<IAppointmentService, AppointmentService>();
 
 // Agentic AI Integration
@@ -73,7 +86,7 @@ builder.Services.AddCors(options =>
 // ================================================================
 // Controllers & JSON Serialization
 // ================================================================
-builder.Services.AddControllers()
+builder.Services.AddControllers(options => options.Filters.Add<LegalService.API.Infrastructure.LawyerAccessFilter>())
     .AddJsonOptions(options =>
     {
         options.JsonSerializerOptions.PropertyNameCaseInsensitive = true;
@@ -164,7 +177,27 @@ builder.Services.AddAuthorization();
 
 var app = builder.Build();
 
-if (args.Contains("--seed-demo-lawyers") || args.Contains("--report-demo-lawyers") ||
+if (args.Contains("--backfill-lawyer-schedules"))
+{
+    if (!app.Environment.IsDevelopment())
+        throw new InvalidOperationException("Schedule backfill command may only run in Development.");
+    using var scope = app.Services.CreateScope();
+    var result = await LawyerScheduleBackfill.RunAsync(scope.ServiceProvider.GetRequiredService<ApplicationDbContext>());
+    Console.WriteLine($"Schedule backfill: {result.Lawyers} lawyers, {result.Durations} unset durations configured.");
+    return;
+}
+
+if (args.Contains("--seed-development-admin"))
+{
+    using var scope = app.Services.CreateScope();
+    var created = await DevelopmentAdminSeeder.SeedAsync(
+        scope.ServiceProvider.GetRequiredService<ApplicationDbContext>(),
+        scope.ServiceProvider.GetRequiredService<IPasswordService>(), app.Configuration, app.Environment);
+    Console.WriteLine(created ? "Development Admin setup: created." : "Development Admin setup: already exists; unchanged.");
+    return;
+}
+
+if (args.Contains("--seed-demo-lawyers") || args.Contains("--seed-demo-scheduling") || args.Contains("--report-demo-lawyers") ||
     args.Contains("--normalize-synthetic-lawyers"))
 {
     if (!app.Environment.IsDevelopment())
@@ -177,13 +210,18 @@ if (args.Contains("--seed-demo-lawyers") || args.Contains("--report-demo-lawyers
         Console.WriteLine($"Synthetic identities normalized: {result.LawyerNamesChanged} lawyer names, " +
             $"{result.LicensesChanged} licenses, {result.AccountNamesChanged} account names.");
     }
+    if (args.Contains("--seed-demo-scheduling")) {
+        var result = await DemoLawyerSeeder.SeedExistingSchedulesAsync(db,
+            scope.ServiceProvider.GetRequiredService<LegalService.API.Services.Scheduling.AvailabilityService>().Today);
+        Console.WriteLine($"Scheduling demo: {result.Windows} appointment snapshots, {result.Slots} booked slots added; profiles/accounts preserved.");
+    }
     if (args.Contains("--seed-demo-lawyers"))
     {
         var result = await DemoLawyerSeeder.SeedAsync(db,
             scope.ServiceProvider.GetRequiredService<IPasswordService>(),
-            DateOnly.FromDateTime(DateTime.UtcNow));
+            scope.ServiceProvider.GetRequiredService<LegalService.API.Services.Scheduling.AvailabilityService>().Today);
         Console.WriteLine($"Demo seed: {result.LawyersCreated} lawyers, {result.ServicesCreated} legal services, " +
-            $"{result.AvailabilitiesCreated} availability windows, {result.SlotsCreated} slots added. " +
+            $"{result.AvailabilitiesCreated} appointment timing snapshots, {result.SlotsCreated} booked snapshot slots added. " +
             $"Customer created: {result.CustomerCreated}. Customer UUID: {result.CustomerId}");
     }
     Console.WriteLine(JsonSerializer.Serialize(await DemoLawyerSeeder.ReportAsync(db),
@@ -195,7 +233,7 @@ if (args.Contains("--seed-demo-lawyers") || args.Contains("--report-demo-lawyers
 // HTTP Pipeline Configuration
 // ================================================================
 app.UseMiddleware<ExceptionMiddleware>();
-app.UseWhen(context => context.Request.Path.StartsWithSegments("/api/lawyer-recommendations"), branch => branch.UseExceptionHandler());
+app.UseWhen(context => (context.Request.Path.StartsWithSegments("/api/lawyer-recommendations") || context.Request.Path.StartsWithSegments("/api/workforce-analysis") || context.Request.Path.StartsWithSegments("/api/careers") || context.Request.Path.StartsWithSegments("/api/workforce-settings") || context.Request.Path.StartsWithSegments("/api/clients") || context.Request.Path.StartsWithSegments("/api/dev/workforce-demo") || context.Request.Path.StartsWithSegments("/api/lawyers") || context.Request.Path.StartsWithSegments("/api/lawyer") || context.Request.Path.StartsWithSegments("/api/auth") || context.Request.Path.StartsWithSegments("/api/appointments")), branch => branch.UseExceptionHandler());
 
 if (app.Environment.IsDevelopment())
 {
@@ -219,6 +257,7 @@ app.UseAuthentication();   // Must be before UseAuthorization()
 app.UseAuthorization();
 
 app.MapControllers();
+app.MapWorkforceDemoEndpoints();
 
 if (!app.Configuration.GetValue<bool>("EfDesignTime"))
 using (var scope = app.Services.CreateScope())
@@ -230,6 +269,12 @@ using (var scope = app.Services.CreateScope())
         await DbInitializer.SeedCategoriesAsync(dbContext);
         await DbInitializer.SeedDocumentationServicesAsync(dbContext);
         await DbInitializer.SeedStaffAccountsAsync(dbContext, passwordService,app.Configuration);
+        if (app.Environment.IsDevelopment())
+        {
+            var result = await LawyerScheduleBackfill.RunAsync(dbContext);
+            scope.ServiceProvider.GetRequiredService<ILogger<Program>>().LogInformation(
+                "Schedule backfill: {Lawyers} lawyers, {Durations} unset durations configured.", result.Lawyers, result.Durations);
+        }
     }
     catch (Exception ex)
     {

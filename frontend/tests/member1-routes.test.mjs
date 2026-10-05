@@ -17,6 +17,7 @@ let EligiblePractitioners;
 let filterLegalServices;
 let LawyerRecommendations;
 let RecommendationWorkflow;
+let RecommendationWorkflowProgress;
 let workflowStages;
 let LawyerPagination;
 let lawyerPagination;
@@ -28,12 +29,13 @@ let coverageWarnings;
 let LawyerIdentity;
 
 before(async () => {
-  server = await createServer({ server: { middlewareMode: true, hmr: false, ws: false }, appType: "custom" });
+  server = await createServer({ cacheDir: "node_modules/.vite-member1-ssr", server: { middlewareMode: true, hmr: false, ws: false }, appType: "custom" });
   ({ lawyerLegalServicesRoutes: routes } = await server.ssrLoadModule("/src/routes/LawyerLegalServicesRoutes.tsx"));
   ({ SpecializationManager } = await server.ssrLoadModule("/src/components/lawyers/SpecializationManager.tsx"));
   ({ LegalServiceManager, EligiblePractitioners } = await server.ssrLoadModule("/src/components/lawyers/LegalServiceManager.tsx"));
   ({ filterLegalServices } = await server.ssrLoadModule("/src/components/lawyers/legalServiceFilters.ts"));
   ({ LawyerRecommendations, RecommendationWorkflow } = await server.ssrLoadModule("/src/components/lawyers/LawyerRecommendations.tsx"));
+  ({ RecommendationWorkflowProgress } = await server.ssrLoadModule("/src/features/lawyerServices/recommendations/components/RecommendationWorkflowProgress.tsx"));
   ({ workflowStages } = await server.ssrLoadModule("/src/components/lawyers/recommendationWorkflow.ts"));
   ({ LawyerPagination } = await server.ssrLoadModule("/src/components/lawyers/LawyerPagination.tsx"));
   lawyerPagination = await server.ssrLoadModule("/src/components/lawyers/lawyerPageUtils.ts");
@@ -47,19 +49,29 @@ before(async () => {
 
 after(async () => { await server?.close(); });
 
+test("confirmed unsupported result overrides a stale request flag and counts confirmed stages", () => {
+  const result = { workflowId: "unsupported", status: "UNSUPPORTED", date: "2026-10-07", recommendations: [], warnings: [],
+    parsedRequirement: { categoryId: null, categoryName: null },
+    trace: ["received", "parse_requirement"].map(step => ({ step, status: "COMPLETED" })) };
+  const html = renderToStaticMarkup(React.createElement(RecommendationWorkflowProgress, { result, busy: true }));
+  assert.match(html, />UNSUPPORTED<\/p>/); assert.match(html, /2 of 9 stages complete/);
+  assert.doesNotMatch(html, /ANALYSING|Analysis request in progress/);
+  assert.match(html, /data-state="FAILED"/);
+});
+
 test("each direct section URL renders the shared header and its active section", () => {
   const sections = [
     ["lawyers", "Lawyers", "All Practice Areas"],
     ["specializations", "Practice Areas", "Loading Practice Areas"],
     ["legal-services", "Legal Services", "Loading Legal Services"],
-    ["recommendations", "AI Recommendation", "Find Suitable Lawyers"],
+    ["workforce-hiring", "Workforce &amp; Hiring", "Run Workforce Analysis"],
   ];
 
   for (const [path, label, content] of sections) {
     const html = renderToStaticMarkup(React.createElement(MemoryRouter, { initialEntries: [`${root}/${path}`] },
       React.createElement(Routes, null, routes)));
     assert.equal((html.match(/Lawyer &amp; Legal Service Management/g) ?? []).length, 1, path);
-    assert.match(html, /Manage practitioners, legal categories, services and AI recommendations/, path);
+    assert.match(html, /Manage practitioners, legal categories, services and workforce coverage/, path);
     assert.match(html, new RegExp(`aria-current="page"[^>]*>${label}<\/a>`), path);
     assert.match(html, new RegExp(content), path);
     if (path === "lawyers") {
@@ -70,23 +82,27 @@ test("each direct section URL renders the shared header and its active section",
   }
 });
 
-test("shared operational summary uses the supplied active, catalog, and total counts", () => {
-  const summary = { activeLawyers: 29, totalLawyers: 34, practiceAreas: 5, legalServices: 25, coverage: [] };
-  const html = renderToStaticMarkup(React.createElement(OperationalSummary,
-    { summary, loading: false, error: false, coverageOpen: false, onToggle: () => {}, onRetry: () => {} }));
-  assert.match(html, /29 Active Lawyers/);
-  assert.match(html, /5 Practice Areas/);
-  assert.match(html, /25 Legal Services/);
-  assert.match(html, /34 total lawyer records/);
+test("shared operational summary uses dynamic cards, verified coverage sums and honest request states", () => {
+  const props = { loading: false, error: null, coverageOpen: false, onToggle: () => {}, onRetry: () => {} };
+  const summary = { activeLawyers: 31, totalLawyers: 35, practiceAreas: 5, legalServices: 25,
+    coverage: [{ futureAvailabilityCount: 7 }, { futureAvailabilityCount: 4 }] };
+  const html = renderToStaticMarkup(React.createElement(OperationalSummary, { ...props, summary }));
+  assert.match(html, /31<\/p>/);
+  assert.match(html, /of 35 total lawyers/);
+  assert.match(html, /5<\/p>/);
+  assert.match(html, /25<\/p>/);
+  assert.match(html, /11<\/p>/);
+  assert.equal((html.match(/<article/g) ?? []).length, 4);
+  assert.match(html, /Available Appointment Slots/);
   assert.match(html, /aria-expanded="false"/);
-  assert.doesNotMatch(html, /34 Registered Lawyers/);
-  const unavailable = renderToStaticMarkup(React.createElement(OperationalSummary,
-    { summary: null, loading: false, error: "Operational summary unavailable.", coverageOpen: false, onToggle: () => {}, onRetry: () => {} }));
-  assert.match(unavailable, /Operational summary unavailable/);
+  const loading = renderToStaticMarkup(React.createElement(OperationalSummary, { ...props, summary: null, loading: true }));
+  assert.match(loading, /Loading summary/);
+  assert.equal((loading.match(/aria-busy="true"/g) ?? []).length, 4);
+  assert.doesNotMatch(loading, /0<\/p>/);
+  const unavailable = renderToStaticMarkup(React.createElement(OperationalSummary, { ...props, summary: null, error: "Summary unavailable. Please try again." }));
+  assert.match(unavailable, /Summary unavailable/);
   assert.match(unavailable, /Retry/);
-  const outdated = renderToStaticMarkup(React.createElement(OperationalSummary,
-    { summary: null, loading: false, error: "Operational summary requires the updated backend. Restart the API, then Retry.", coverageOpen: false, onToggle: () => {}, onRetry: () => {} }));
-  assert.match(outdated, /requires the updated backend/);
+  assert.doesNotMatch(unavailable, /0<\/p>/);
 });
 
 test("coverage renders actual areas and factual warnings", () => {
@@ -95,16 +111,33 @@ test("coverage renders actual areas and factual warnings", () => {
     { practiceAreaId: 20, practiceAreaName: "Tax Law", activeLawyers: 0, legalServices: 0, futureAvailabilityCount: 0 },
   ];
   const html = renderToStaticMarkup(React.createElement(CoverageOverview, { rows }));
-  assert.match(html, /<table/);
+  assert.match(html, /aria-label="Practice Area coverage"/);
+  assert.match(html, /Coverage Health Matrix/);
+  assert.match(html, /2 Practice Areas/);
   assert.match(html, /Corporate Law/);
   assert.match(html, /Tax Law/);
-  assert.match(html, /Ready/);
+  assert.match(html, /Operational/);
   assert.match(html, /No Active Lawyers/);
   assert.match(html, /No Legal Services/);
-  assert.match(html, /No Future Availability/);
+  assert.match(html, /No Available Slots/);
   assert.doesNotMatch(html, /Family Law/);
   assert.deepEqual(coverageWarnings(rows[0]), []);
-  assert.deepEqual(coverageWarnings(rows[1]), ["No Active Lawyers", "No Legal Services", "No Future Availability"]);
+  assert.deepEqual(coverageWarnings(rows[1]), ["No Active Lawyers", "No Legal Services", "No Available Slots"]);
+  assert.deepEqual(coverageWarnings({ ...rows[0], legalServices: 0 }), ["No Legal Services"]);
+  const partial = renderToStaticMarkup(React.createElement(CoverageOverview, { rows: [{ ...rows[0], legalServices: 0 }] }));
+  assert.match(partial, /bg-amber-400/);
+  assert.match(partial, /No Legal Services/);
+  assert.doesNotMatch(partial, /bg-red-400|Operational/);
+  const empty = renderToStaticMarkup(React.createElement(CoverageOverview, { rows: [] }));
+  assert.match(empty, /No Practice Area coverage available/);
+  assert.doesNotMatch(empty, /aria-label="Practice Area coverage"/);
+  const loading = renderToStaticMarkup(React.createElement(CoverageOverview, { rows, loading: true }));
+  assert.match(loading, /Loading coverage information/);
+  assert.doesNotMatch(loading, /Corporate Law|Operational|No Active Lawyers/);
+  const failed = renderToStaticMarkup(React.createElement(CoverageOverview, { rows, error: "Summary unavailable", onRetry: () => {} }));
+  assert.match(failed, /Unable to load coverage information/);
+  assert.match(failed, /Retry/);
+  assert.doesNotMatch(failed, /Corporate Law|Operational/);
 });
 
 test("lawyer identity shows actual status without a synthetic badge", () => {
@@ -169,15 +202,15 @@ test("the module default and legacy lawyer URL point to lawyers", () => {
   assert.equal(legacy.element.props.children.props.to, `${root}/lawyers`);
   assert.equal(module.children.find(route => route.index).element.props.to, "lawyers");
   assert.deepEqual(module.children.filter(route => route.path).map(route => route.path),
-    ["lawyers", "specializations", "legal-services", "recommendations"]);
+    ["lawyers", "specializations", "legal-services", "workforce-hiring"]);
 });
 
 test("practice area manager shows real counts, sorted list actions and empty state", () => {
   const specialization = { specializationId: 1, name: "Corporate Law", description: "Business matters", lawyerCount: 5, legalServiceCount: 4 };
   const specializationHtml = renderToStaticMarkup(React.createElement(SpecializationManager,
     { items: [specialization, { specializationId: 2, name: "Administrative Law", description: "Public matters", lawyerCount: 0, legalServiceCount: 0 }], onChanged: async () => {} }));
-  assert.match(specializationHtml, /Practice Area Management/);
-  assert.match(specializationHtml, /2 Practice Areas/);
+  assert.match(specializationHtml, /Practice Areas/);
+  assert.doesNotMatch(specializationHtml, /2 Practice Areas/);
   assert.match(specializationHtml, /Add Practice Area/);
   assert.ok(specializationHtml.indexOf("Administrative Law") < specializationHtml.indexOf("Corporate Law"));
   assert.match(specializationHtml, /Corporate Law/);
@@ -201,10 +234,10 @@ test("legal service catalog shows real summary, area filters, counts and actions
   ];
   const serviceHtml = renderToStaticMarkup(React.createElement(LegalServiceManager,
     { items: services, specializations: [specialization], onChanged: async () => {} }));
-  assert.match(serviceHtml, /Legal Service Management/);
-  assert.match(serviceHtml, /Manage the legal services offered under each practice area/);
-  assert.match(serviceHtml, /3 Legal Services/);
-  assert.match(serviceHtml, /1 Practice Area/);
+  assert.match(serviceHtml, /Legal Services/);
+  assert.match(serviceHtml, /Manage legal services available under each Practice Area/);
+  assert.doesNotMatch(serviceHtml, /3 Legal Services/);
+  assert.doesNotMatch(serviceHtml, /1 Practice Area/);
   assert.doesNotMatch(serviceHtml, /Lawyer Assignments|Manage Assigned Lawyers/);
   assert.match(serviceHtml, /Eligible Lawyers/);
   assert.match(serviceHtml, /5 Lawyers/);
@@ -247,7 +280,7 @@ test("service details show matching eligible practitioners without assignment co
     eligibleLawyers: [{ lawyerId: "one", name: "Nimal Perera" }, { lawyerId: "two", name: "Saman Wijayananda" }],
   };
   const html = renderToStaticMarkup(React.createElement(EligiblePractitioners, { details }));
-  assert.match(html, /Eligible Practitioners/);
+  assert.match(html, /Eligible Lawyers/);
   assert.match(html, /2 Lawyers/);
   assert.match(html, /Nimal Perera/);
   assert.match(html, /Saman Wijayananda/);
@@ -276,8 +309,8 @@ test("practice area details use the Admin endpoint without changing the public l
 
 test("existing recommendation form renders without requesting recommendations", () => {
   const html = renderToStaticMarkup(React.createElement(MemoryRouter, null, React.createElement(LawyerRecommendations)));
-  assert.match(html, /AI Lawyer Recommendation/);
-  assert.match(html, /Find Suitable Lawyers/);
+  assert.match(html, /AI Lawyer Matching/);
+  assert.match(html, /Analyse Requirement/);
   assert.doesNotMatch(html, /Customer UUID|Slot ID/);
 });
 
@@ -294,8 +327,8 @@ test("workflow stages distinguish AI, system, human and stop after unsupported c
   assert.equal(stages[3].state, "pending");
   assert.equal(stages[7].actor, "HUMAN");
   const html = renderToStaticMarkup(React.createElement(RecommendationWorkflow, { result: { ...base, status: "UNSUPPORTED" } }));
-  assert.match(html, /Practice Area Verified/);
-  assert.match(html, /Stopped/);
+  assert.match(html, /Catalog Validation/);
+  assert.match(html, /data-state="FAILED"/);
   assert.doesNotMatch(html, /Gemini.*reasoning|chain.of.thought/i);
 });
 

@@ -39,6 +39,9 @@ jobs:
       - name: Flutter version
         run: flutter --version
 
+      - name: Prepare mobile configuration
+        run: cp .env.example .env
+
       - name: Install dependencies
         run: flutter pub get
 

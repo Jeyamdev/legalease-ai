@@ -32,8 +32,9 @@ export const ClerkRoute: React.FC<{ children: React.ReactNode }> = ({ children }
 };
 
 
-export const LawyerRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+export const LawyerRoute: React.FC<{ children: React.ReactNode; allowPasswordSetup?: boolean }> = ({ children, allowPasswordSetup }) => {
   if (authApi.isLawyerAuthenticated()) {
+    if (!allowPasswordSetup && authApi.getCurrentLawyer()?.mustChangePassword) return <Navigate to="/lawyer/change-password" replace />;
     return <>{children}</>;
   }
 

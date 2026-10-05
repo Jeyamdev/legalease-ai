@@ -26,7 +26,7 @@ public class LawyerRecommendationApprovalTests
         var date = new DateOnly(2030, 1, 7);
         var workflow = new LawyerRecommendationWorkflow
         {
-            WorkflowId = Guid.NewGuid(), OwnerUserId = 7, Status = "AWAITING_APPROVAL",
+            WorkflowId = Guid.NewGuid(), ClientId = 42, SelectedLawyerId = lawyerId, SelectedSlotId = slotId, ReviewStage = "APPOINTMENT", OwnerUserId = 7, Status = "AWAITING_APPROVAL",
             UserRequirement = "Synthetic property dispute", CategoryId = 3, RequestedDate = date,
             ParsedRequirementJson = JsonSerializer.Serialize(new ParsedLegalRequirement("Synthetic property dispute", 3, "Property Law", null, null, [])),
             RecommendationsJson = JsonSerializer.Serialize(new[] { new Recommendation(lawyerId, 55, "Recorded category match") })
@@ -34,14 +34,16 @@ public class LawyerRecommendationApprovalTests
         db.LawyerRecommendationWorkflows.Add(workflow);
         db.Users.Add(new User { UserId = 42, Name = "Synthetic Customer", Email = "customer@example.test", Role = "Customer" });
         db.Specializations.Add(new Specialization { SpecializationId = 3, Name = "Property Law" });
-        db.Lawyers.Add(new Lawyer { LawyerId = lawyerId, Name = "Synthetic Lawyer", Status = "Active",
+        db.Lawyers.Add(new Lawyer { LawyerId = lawyerId, Name = "Synthetic Lawyer", Status = "Active", DefaultAppointmentDurationMinutes = 60,
             LawyerSpecializations = new List<LawyerSpecialization> { new() { LawyerId = lawyerId, SpecializationId = 3 } },
             LawyerAvailabilities = new List<LawyerAvailability> { new()
             {
                 AvailabilityId = Guid.NewGuid(), LawyerId = lawyerId, Date = date,
-                AvailabilitySlots = new List<AvailabilitySlot> { new() { SlotId = slotId, IsBooked = false } }
+                AvailabilitySlots = new List<AvailabilitySlot> { new() { SlotId = slotId, IsBooked = false, StartTime = new(9, 0), EndTime = new(10, 0) } }
             } }
         });
+        await db.SaveChangesAsync();
+        db.LawyerWorkingSchedules.Add(new() { LawyerId = lawyerId, DayOfWeek = date.DayOfWeek, IsWorkingDay = true, StartTime = new(9, 0), EndTime = new(10, 0) });
         await db.SaveChangesAsync();
         var appointments = new Mock<IAppointmentService>(MockBehavior.Strict);
         appointments.Setup(x => x.BookAppointmentAsync(It.Is<BookAppointmentRequest>(r =>

@@ -103,7 +103,7 @@ class _LawyersScreenState extends State<LawyersScreen> {
 
   Future<void> _showAddLawyerDialog() async {
     if (_specializations.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Load or add a specialization in the Admin dashboard first.')));
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Load or add a Practice Area in the Admin dashboard first.')));
       return;
     }
     final formKey = GlobalKey<FormState>();
@@ -502,7 +502,7 @@ class _LawyersScreenState extends State<LawyersScreen> {
                       Navigator.push(context, MaterialPageRoute(
                         builder: (_) => SpecializationDetailsScreen(specialization: specialization)));
                     }
-                  }, child: const Text('View specialization details')),
+                  }, child: const Text('View Practice Area details')),
                 // Types of laws tabs
                 const Text(
                   'TYPES OF LAWS',

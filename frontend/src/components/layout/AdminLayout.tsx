@@ -1,5 +1,7 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
+import { UsersRound } from "lucide-react";
+import { adminWorkflowRoutes } from "../../routes/adminWorkflowRoutes";
 import { documentationApi } from "../../api/documentationApi";
 import { authApi } from "../../api/authApi";
 
@@ -8,6 +10,7 @@ interface AdminLayoutProps {
   title: string;
   subtitle?: string;
   showStats?: boolean;
+  responsiveNavigation?: boolean;
 }
 
 interface DashboardStats {
@@ -39,6 +42,11 @@ const navItems = [
         <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />
       </svg>
     ),
+  },
+  {
+    label: "AI Lawyer Matching",
+    path: adminWorkflowRoutes.lawyerMatching,
+    icon: <UsersRound className="w-4 h-4" strokeWidth={1.8} aria-hidden="true" />,
   },
   {
     label: "Clerk Management",
@@ -109,7 +117,10 @@ const navItems = [
   },
 ];
 
-export const AdminLayout: React.FC<AdminLayoutProps> = ({ children, title, subtitle, showStats = true }) => {
+let restoreSidebarFocusAfterNavigation = false;
+
+export const AdminLayout: React.FC<AdminLayoutProps> = ({ children, title, subtitle, showStats = true, responsiveNavigation = false }) => {
+  const sidebarToggle = useRef<HTMLButtonElement>(null);
   const location = useLocation();
   const navigate = useNavigate();
   const currentAdmin = authApi.getCurrentAdmin();
@@ -117,7 +128,15 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children, title, subti
   const [statsLoading, setStatsLoading] = useState(true);
   const [lastRefreshed, setLastRefreshed] = useState<Date>(new Date());
   const [currentTime, setCurrentTime] = useState<Date>(new Date());
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(() =>
+    responsiveNavigation && typeof window !== "undefined" ? window.matchMedia("(min-width: 768px)").matches : true);
+
+  useLayoutEffect(() => {
+    if (restoreSidebarFocusAfterNavigation) {
+      sidebarToggle.current?.focus();
+      restoreSidebarFocusAfterNavigation = false;
+    }
+  }, [location.pathname]);
 
   // Live real-time clock updating every second
   useEffect(() => {
@@ -197,11 +216,14 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children, title, subti
       <header className="shrink-0 z-50 bg-slate-950 border-b border-slate-800 shadow-md backdrop-blur-md bg-opacity-95">
         <div className="flex items-center justify-between px-4 sm:px-6 h-16">
           {/* Left: Brand + Toggle */}
-          <div className="flex items-center gap-4">
+          <div className={`flex items-center ${responsiveNavigation ? "gap-2 md:gap-4" : "gap-4"}`}>
             <button
+              ref={sidebarToggle}
               onClick={() => setSidebarOpen(o => !o)}
               className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-900 transition-colors cursor-pointer"
               aria-label="Toggle sidebar"
+              aria-expanded={sidebarOpen}
+              aria-controls="admin-navigation"
             >
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="w-5 h-5">
                 <line x1="3" y1="6" x2="21" y2="6" />
@@ -216,11 +238,11 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children, title, subti
               <div>
                 <div className="text-base font-serif font-bold tracking-wide text-white flex items-center gap-2">
                   <span>LegalEase</span>
-                  <span className="text-[10px] bg-amber-500/15 text-amber-300 px-2 py-0.5 rounded-full border border-amber-500/30 uppercase font-mono tracking-wider font-bold">
+                  <span className={`${responsiveNavigation ? "hidden md:inline " : ""}text-[10px] bg-amber-500/15 text-amber-300 px-2 py-0.5 rounded-full border border-amber-500/30 uppercase font-mono tracking-wider font-bold`}>
                     Admin Console
                   </span>
                 </div>
-                <div className="text-[10px] text-slate-400 font-medium -mt-0.5">
+                <div className={`${responsiveNavigation ? "hidden md:block " : ""}text-[10px] text-slate-400 font-medium -mt-0.5`}>
                   Executive Operations & Oversight
                 </div>
               </div>
@@ -228,7 +250,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children, title, subti
           </div>
 
           {/* Right: Status, Refresh, and Clerk Workspace switch */}
-          <div className="flex items-center gap-4 text-xs">
+          <div className={`flex items-center ${responsiveNavigation ? "gap-2 md:gap-4" : "gap-4"} text-xs`}>
             <div className="hidden sm:flex items-center gap-2 text-slate-400">
               <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
               <span className="font-mono text-[11px] text-slate-300 font-semibold tracking-wide">
@@ -248,11 +270,11 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children, title, subti
               </button>
             </div>
 
-            <div className="h-4 w-px bg-slate-800" />
+            <div className={`${responsiveNavigation ? "hidden md:block " : ""}h-4 w-px bg-slate-800`} />
 
             <Link
               to="/clerk/cases"
-              className="text-xs font-semibold text-slate-300 hover:text-amber-300 bg-slate-900 hover:bg-slate-800 px-3.5 py-1.5 rounded-xl border border-slate-800 transition flex items-center gap-1.5 shadow-2xs"
+              className={`${responsiveNavigation ? "hidden md:flex" : "flex"} text-xs font-semibold text-slate-300 hover:text-amber-300 bg-slate-900 hover:bg-slate-800 px-3.5 py-1.5 rounded-xl border border-slate-800 transition items-center gap-1.5 shadow-2xs`}
             >
               <span>📋</span>
               <span className="hidden sm:inline">Clerk Portal</span>
@@ -285,7 +307,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children, title, subti
             </button>
             <Link
               to="/"
-              className="text-slate-400 hover:text-white transition-colors flex items-center gap-1 text-xs"
+              className={`${responsiveNavigation ? "hidden md:flex" : "flex"} text-slate-400 hover:text-white transition-colors items-center gap-1 text-xs`}
               title="Return to Main Portal"
             >
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="w-3.5 h-3.5">
@@ -294,6 +316,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children, title, subti
               <span className="hidden md:inline">Public Site</span>
             </Link>
 
+            {!responsiveNavigation && (
             <button
               onClick={() => {
                 authApi.logoutAdmin();
@@ -309,14 +332,17 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children, title, subti
               </svg>
               <span>Logout</span>
             </button>
+            )}
           </div>
         </div>
       </header>
 
-      <div className="flex flex-1 overflow-hidden min-h-0">
+      {responsiveNavigation && sidebarOpen && <button type="button" aria-label="Close navigation" onClick={() => setSidebarOpen(false)}
+        className="fixed inset-x-0 bottom-0 top-16 z-30 bg-slate-900/40 md:hidden" />}
+      <div className="relative flex flex-1 overflow-hidden min-h-0">
         {/* ─── Sidebar (Fixed side navigation, does not scroll with page) ─── */}
-        <aside
-          className="bg-slate-950 border-r border-slate-800/90 transition-all duration-300 overflow-y-auto overflow-x-hidden flex flex-col shrink-0 h-full select-none"
+        <aside id="admin-navigation" aria-label="Admin navigation" aria-hidden={!sidebarOpen} inert={!sidebarOpen}
+          className={`${responsiveNavigation ? "absolute inset-y-0 left-0 z-40 md:static " : ""}bg-slate-950 border-r border-slate-800/90 transition-all duration-300 overflow-y-auto overflow-x-hidden flex flex-col shrink-0 h-full select-none`}
           style={{
             width: sidebarOpen ? 240 : 0,
             minWidth: sidebarOpen ? 240 : 0,
@@ -328,11 +354,18 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children, title, subti
               <span className="w-1.5 h-1.5 rounded-full bg-slate-700" />
             </div>
             {navItems.map(item => {
-              const isActive = location.pathname.startsWith(item.path);
+              const isActive = location.pathname === item.path || location.pathname.startsWith(`${item.path}/`);
               return (
                 <Link
                   key={item.path}
                   to={item.path}
+                  aria-current={isActive ? "page" : undefined}
+                  onClick={() => {
+                    if (responsiveNavigation && window.matchMedia("(max-width: 767px)").matches) {
+                      restoreSidebarFocusAfterNavigation = true;
+                      setSidebarOpen(false);
+                    }
+                  }}
                   className={`flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-semibold transition-all duration-200 group relative ${
                     isActive
                       ? "bg-gradient-to-r from-amber-500/20 via-amber-500/10 to-transparent text-amber-300 border border-amber-500/30 shadow-xs font-bold"

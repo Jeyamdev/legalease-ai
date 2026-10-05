@@ -1,3 +1,6 @@
+using LegalService.API.Services.Scheduling;
+using LegalService.API.Services.Workforce;
+using Microsoft.Extensions.Options;
 using LegalService.API.Data;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -6,7 +9,7 @@ using Microsoft.EntityFrameworkCore;
 namespace LegalService.API.Controllers;
 
 [ApiController, Route("api/lawyer-services/summary"), Authorize(Roles = "Admin")]
-public sealed class LawyerServicesSummaryController(ApplicationDbContext db) : ControllerBase
+public sealed class LawyerServicesSummaryController(ApplicationDbContext db, AvailabilityService? scheduling = null, IOptions<WorkforceOptions>? options = null) : ControllerBase
 {
     [HttpGet]
     public async Task<IActionResult> Get(CancellationToken ct)
@@ -19,20 +22,12 @@ public sealed class LawyerServicesSummaryController(ApplicationDbContext db) : C
             .Select(area => new { area.SpecializationId, area.Name })
             .ToListAsync(ct);
         var activeLinks = await db.LawyerSpecializations.AsNoTracking()
-            .Where(link => link.Lawyer.Status == "Active")
+            .Where(link => link.Lawyer.Status == "Active" && link.Lawyer.LawyerSpecializations.Count == 1)
             .Select(link => new { link.LawyerId, link.SpecializationId })
             .ToListAsync(ct);
         var serviceCategories = await db.LegalServices.AsNoTracking()
             .Select(service => service.Category).ToListAsync(ct);
-        var futureSlots = await db.AvailabilitySlots.AsNoTracking()
-            .Where(slot => !slot.IsBooked && slot.LawyerAvailability.Lawyer.Status == "Active" &&
-                (slot.LawyerAvailability.Date > today ||
-                 (slot.LawyerAvailability.Date == today && slot.StartTime > currentTime)))
-            .GroupBy(slot => slot.LawyerAvailability.LawyerId)
-            .Select(group => new { LawyerId = group.Key, Count = group.Count() })
-            .ToListAsync(ct);
-
-        var slotsByLawyer = futureSlots.ToDictionary(item => item.LawyerId, item => item.Count);
+        var slotsByLawyer = await (scheduling ?? new AvailabilityService(db)).CapacityAsync(options?.Value.FutureWindowDays ?? 30, ct);
         var coverage = areas.Select(area =>
         {
             var links = activeLinks.Where(link => link.SpecializationId == area.SpecializationId).ToArray();

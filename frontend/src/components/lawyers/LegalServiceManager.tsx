@@ -16,7 +16,7 @@ function apiError(error: unknown, fallback: string) {
 
 export function EligiblePractitioners({ details }: { details: LegalServiceDetails }) {
   return <div className="border-t border-slate-200 pt-4">
-    <h4 className="font-semibold text-slate-900">Eligible Practitioners <span className="ml-2 text-sm font-normal text-slate-500">{details.eligibleLawyerCount} {details.eligibleLawyerCount === 1 ? "Lawyer" : "Lawyers"}</span></h4>
+    <h4 className="font-semibold text-slate-900">Eligible Lawyers <span className="ml-2 text-sm font-normal text-slate-500">{details.eligibleLawyerCount} {details.eligibleLawyerCount === 1 ? "Lawyer" : "Lawyers"}</span></h4>
     <p className="mt-1 text-xs text-slate-500">Lawyers registered under {details.category} are eligible to provide this service.</p>
     {details.eligibleLawyers.length ? <ul className="mt-2 space-y-1 text-sm text-slate-700">{details.eligibleLawyers.map(lawyer => <li key={lawyer.lawyerId}>{lawyer.name}</li>)}</ul> : <p className="mt-2 text-sm text-slate-500">No active lawyers belong to this Practice Area yet.</p>}
   </div>;
@@ -78,6 +78,7 @@ export function LegalServiceManager({ items, specializations, onChanged }: Props
   };
 
   const save = async () => {
+    if (busy || !serviceName.trim() || !areas.some(area => area.name === category)) return;
     setBusy(true);
     setError("");
     try {
@@ -93,7 +94,7 @@ export function LegalServiceManager({ items, specializations, onChanged }: Props
   };
 
   const remove = async () => {
-    if (!deleting) return;
+    if (!deleting || busy) return;
     setBusy(true);
     setError("");
     try {
@@ -123,12 +124,9 @@ export function LegalServiceManager({ items, specializations, onChanged }: Props
   return <section className="mb-6 min-w-0">
     <div className="mb-5 flex flex-wrap items-end justify-between gap-4">
       <div>
-        <h2 className="text-xl font-bold text-slate-900">Legal Service Management</h2>
-        <p className="mt-1 text-sm text-slate-500">Manage the legal services offered under each practice area.</p>
-        <p className="mt-3 text-sm font-semibold text-slate-700">
-          {items.length} Legal {items.length === 1 ? "Service" : "Services"}
-          <span className="mx-2 text-slate-300" aria-hidden="true">|</span>{specializations.length} Practice {specializations.length === 1 ? "Area" : "Areas"}
-        </p>
+        <h2 className="text-xl font-bold text-slate-900">Legal Services</h2>
+        <p className="mt-1 text-sm text-slate-500">Manage legal services available under each Practice Area.</p>
+
       </div>
       <button type="button" disabled={!areas.length} onClick={() => openForm(null)} className="inline-flex items-center gap-2 rounded-lg bg-amber-500 px-4 py-2 text-sm font-bold text-slate-950 hover:bg-amber-600 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-600 disabled:opacity-50">
         <Plus size={16} aria-hidden="true" />Add Legal Service
@@ -158,18 +156,18 @@ export function LegalServiceManager({ items, specializations, onChanged }: Props
         <h3 className="font-semibold text-slate-900">No Legal Services match your filters.</h3>
         <p className="mt-1 text-sm text-slate-500">Try changing the search or Practice Area.</p>
       </div> : <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
-        <div className="hidden grid-cols-[minmax(0,2fr)_minmax(0,1.5fr)_minmax(0,1fr)_auto] gap-4 border-b border-slate-200 bg-slate-50 px-5 py-3 text-xs font-bold uppercase text-slate-500 md:grid">
+        <div className="hidden grid-cols-[minmax(0,2fr)_minmax(0,1.5fr)_minmax(0,1fr)_148px] gap-4 border-b border-slate-200 bg-slate-50 px-5 py-3 text-xs font-bold uppercase text-slate-500 md:grid">
           <span>Service</span><span>Practice Area</span><span>Eligible Lawyers</span><span>Actions</span>
         </div>
         <ul className="divide-y divide-slate-200">
-          {visible.map(item => <li key={item.legalServiceId} className="grid gap-3 px-5 py-4 md:grid-cols-[minmax(0,2fr)_minmax(0,1.5fr)_minmax(0,1fr)_auto] md:items-center md:gap-4">
+          {visible.map(item => <li key={item.legalServiceId} className="grid gap-3 px-5 py-4 transition-colors hover:bg-slate-50/70 md:grid-cols-[minmax(0,2fr)_minmax(0,1.5fr)_minmax(0,1fr)_148px] md:items-center md:gap-4">
             <div className="min-w-0"><h3 className="font-semibold text-slate-900">{item.serviceName}</h3><p className="mt-1 line-clamp-2 text-sm text-slate-500">{item.description || "No description recorded."}</p></div>
             <div><span className="inline-block max-w-full rounded-md bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-700">{item.category}</span></div>
             <p className={`text-sm font-medium ${item.eligibleLawyerCount === 0 ? "text-slate-400" : "text-slate-700"}`}>{item.eligibleLawyerCount} {item.eligibleLawyerCount === 1 ? "Lawyer" : "Lawyers"}</p>
-            <div className="flex items-center gap-4 text-sm font-semibold">
-              <button type="button" onClick={() => void openDetails(item.legalServiceId)} className="text-slate-700 hover:text-amber-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-600">View</button>
-              <button type="button" onClick={() => openForm(item)} className="text-slate-700 hover:text-amber-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-600">Edit</button>
-              <button type="button" onClick={() => { setDeleting(item); setError(""); setSuccess(""); }} className="text-slate-500 hover:text-red-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-700">Delete</button>
+            <div className="flex items-center gap-1 text-sm font-semibold">
+              <button type="button" onClick={() => void openDetails(item.legalServiceId)} className="rounded-md px-2 py-1.5 text-slate-700 hover:bg-slate-100 hover:text-slate-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-600">View</button>
+              <button type="button" onClick={() => openForm(item)} className="rounded-md px-2 py-1.5 text-slate-700 hover:bg-slate-100 hover:text-slate-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-600">Edit</button>
+              <button type="button" onClick={() => { setDeleting(item); setError(""); setSuccess(""); }} className="rounded-md px-2 py-1.5 text-slate-500 hover:bg-red-50 hover:text-red-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-700">Delete</button>
             </div>
           </li>)}
         </ul>

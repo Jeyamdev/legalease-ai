@@ -38,7 +38,10 @@ public static class DbInitializer
         };
         var pristineEfCatalog = catalog.Count == 4 &&
             catalog.All(s => initialNames.TryGetValue(s.SpecializationId, out var name) && name == s.Name) &&
-            !await context.Lawyers.AnyAsync();
+            !await context.Lawyers.AnyAsync() &&
+            !await context.LawyerRecommendationWorkflows.AnyAsync() &&
+            !await context.LegalServices.AnyAsync(s => s.Category == "Family Law" &&
+                (s.LegalServiceId != 2 || s.ServiceName != "Divorce & Custody Filing"));
         if (catalog.Count != 0 && !pristineEfCatalog) return;
 
         if (pristineEfCatalog)
@@ -57,8 +60,14 @@ public static class DbInitializer
                 foreach (var service in services) service.Category = newName;
             }
         }
-        if (!catalog.Any(s => s.Name == "Family Law"))
-            context.Specializations.Add(new Specialization { Name = "Family Law", Description = "Divorce, child custody, and domestic relationships." });
+        if (pristineEfCatalog)
+        {
+            // Retire only untouched bootstrap data. Never remove an Admin-managed area
+            // or rewrite existing practitioners, services, or recommendation history.
+            var familyServices = await context.LegalServices.Where(s => s.Category == "Family Law").ToListAsync();
+            context.LegalServices.RemoveRange(familyServices);
+            context.Specializations.Remove(catalog.Single(s => s.Name == "Family Law"));
+        }
         foreach (var (name, description) in targetCategories)
             if (!catalog.Any(s => s.Name == name))
                 context.Specializations.Add(new Specialization { Name = name, Description = description });

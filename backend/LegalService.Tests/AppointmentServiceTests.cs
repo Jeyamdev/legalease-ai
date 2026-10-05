@@ -1,3 +1,5 @@
+using LegalService.API.Infrastructure;
+using LegalService.API.Services.Scheduling;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -16,10 +18,11 @@ public class AppointmentServiceTests
 {
     // ─── Test Infrastructure ──────────────────────────────────────────────────
 
-    private static ApplicationDbContext CreateInMemoryDb() =>
-        new(new DbContextOptionsBuilder<ApplicationDbContext>()
-            .UseInMemoryDatabase(Guid.NewGuid().ToString())
-            .Options);
+    private static Guid Customer => Guid.Parse("00000000-0000-0000-0000-00000000002a");
+    private static ApplicationDbContext CreateInMemoryDb() {
+        var db = new ApplicationDbContext(new DbContextOptionsBuilder<ApplicationDbContext>().UseInMemoryDatabase(Guid.NewGuid().ToString()).Options);
+        db.Users.Add(new() { UserId = 42, Name = "Customer", Email = "test@example.test", Role = "Customer" }); db.SaveChanges(); return db;
+    }
 
     private static AppointmentService CreateService(ApplicationDbContext ctx) =>
         new(ctx, NullLogger<AppointmentService>.Instance);
@@ -38,11 +41,12 @@ public class AppointmentServiceTests
             lawyer = new Lawyer
             {
                 LawyerId = lawyerId,
-                Qualification = "Senior Advocate",
+                Qualification = "Senior Advocate", Status = "Active", DefaultAppointmentDurationMinutes = 60,
                 LicenseNumber = "SL-998877",
                 CreatedAt = DateTime.UtcNow
             };
             ctx.Lawyers.Add(lawyer);
+            ctx.LawyerWorkingSchedules.AddRange(Enumerable.Range(0, 7).Select(day => new LawyerWorkingSchedule { LawyerId = lawyerId, DayOfWeek = (DayOfWeek)day, IsWorkingDay = true, StartTime = new(9, 0), EndTime = new(17, 0) }));
         }
 
         var availability = ctx.LawyerAvailabilities.FirstOrDefault(a => a.LawyerId == lawyerId && a.Date == date);
@@ -83,7 +87,7 @@ public class AppointmentServiceTests
         var svc = CreateService(ctx);
 
         var lawyerId = Guid.NewGuid();
-        var customerId = Guid.NewGuid();
+        var customerId = Customer;
         var tomorrow = DateOnly.FromDateTime(DateTime.UtcNow.AddDays(1));
         var (_, slot) = SeedLawyerWithSlot(ctx, lawyerId, tomorrow, new TimeOnly(10, 0), new TimeOnly(11, 0));
 
@@ -100,13 +104,13 @@ public class AppointmentServiceTests
         Assert.Equal("Requested", response.Status);
         Assert.Equal(customerId, response.CustomerId);
         Assert.Equal(lawyerId, response.LawyerId);
-        Assert.Equal(slot.SlotId, response.SlotId);
+        Assert.NotEqual(slot.SlotId, response.SlotId);
         Assert.Equal(tomorrow, response.Date);
         Assert.Equal(new TimeOnly(10, 0), response.StartTime);
         Assert.Equal(new TimeOnly(11, 0), response.EndTime);
 
         // Verify slot is booked in DB
-        var updatedSlot = await ctx.AvailabilitySlots.FindAsync(slot.SlotId);
+        var updatedSlot = await ctx.AvailabilitySlots.FindAsync(response.SlotId);
         Assert.NotNull(updatedSlot);
         Assert.True(updatedSlot.IsBooked);
 
@@ -126,10 +130,11 @@ public class AppointmentServiceTests
         var svc = CreateService(ctx);
 
         var lawyerId = Guid.NewGuid();
-        var customerId = Guid.NewGuid();
+        var customerId = Customer;
         var tomorrow = DateOnly.FromDateTime(DateTime.UtcNow.AddDays(1));
         var (_, slot) = SeedLawyerWithSlot(ctx, lawyerId, tomorrow, new TimeOnly(10, 0), new TimeOnly(11, 0), isBooked: true);
 
+        ctx.Appointments.Add(new() { AppointmentId = Guid.NewGuid(), LawyerId = lawyerId, CustomerId = Customer, SlotId = slot.SlotId, Status = "Confirmed" }); ctx.SaveChanges();
         var request = new BookAppointmentRequest
         {
             CustomerId = customerId,
@@ -137,8 +142,8 @@ public class AppointmentServiceTests
             SlotId = slot.SlotId
         };
 
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => svc.BookAppointmentAsync(request));
-        Assert.Contains("already booked", ex.Message);
+        var ex = await Assert.ThrowsAsync<ApiException>(() => svc.BookAppointmentAsync(request));
+        Assert.Equal(409, ex.Status);
     }
 
     [Fact]
@@ -149,12 +154,12 @@ public class AppointmentServiceTests
 
         var request = new BookAppointmentRequest
         {
-            CustomerId = Guid.NewGuid(),
+            CustomerId = Customer,
             LawyerId = Guid.NewGuid(),
             SlotId = Guid.NewGuid()
         };
 
-        await Assert.ThrowsAsync<KeyNotFoundException>(() => svc.BookAppointmentAsync(request));
+        await Assert.ThrowsAsync<ApiException>(() => svc.BookAppointmentAsync(request));
     }
 
     [Fact]
@@ -170,13 +175,13 @@ public class AppointmentServiceTests
 
         var request = new BookAppointmentRequest
         {
-            CustomerId = Guid.NewGuid(),
+            CustomerId = Customer,
             LawyerId = differentLawyerId,
             SlotId = slot.SlotId
         };
 
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => svc.BookAppointmentAsync(request));
-        Assert.Contains("does not belong to the selected lawyer", ex.Message);
+        var ex = await Assert.ThrowsAsync<ApiException>(() => svc.BookAppointmentAsync(request));
+        Assert.Equal(409, ex.Status);
     }
 
     [Fact]
@@ -193,7 +198,7 @@ public class AppointmentServiceTests
         var existingAppointment = new Appointment
         {
             AppointmentId = Guid.NewGuid(),
-            CustomerId = Guid.NewGuid(),
+            CustomerId = Customer,
             LawyerId = lawyerId,
             SlotId = slot1.SlotId,
             Status = "Confirmed",
@@ -216,13 +221,13 @@ public class AppointmentServiceTests
 
         var request = new BookAppointmentRequest
         {
-            CustomerId = Guid.NewGuid(),
+            CustomerId = Customer,
             LawyerId = lawyerId,
             SlotId = slot2.SlotId
         };
 
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => svc.BookAppointmentAsync(request));
-        Assert.Contains("Scheduling conflict detected", ex.Message);
+        var ex = await Assert.ThrowsAsync<ApiException>(() => svc.BookAppointmentAsync(request));
+        Assert.Equal(409, ex.Status);
     }
 
     // ─── 2. Status Transitions & History ──────────────────────────────────────
@@ -234,7 +239,7 @@ public class AppointmentServiceTests
         var svc = CreateService(ctx);
 
         var lawyerId = Guid.NewGuid();
-        var customerId = Guid.NewGuid();
+        var customerId = Customer;
         var tomorrow = DateOnly.FromDateTime(DateTime.UtcNow.AddDays(1));
         var (_, slot) = SeedLawyerWithSlot(ctx, lawyerId, tomorrow, new TimeOnly(14, 0), new TimeOnly(15, 0));
 
@@ -275,7 +280,7 @@ public class AppointmentServiceTests
 
         var booked = await svc.BookAppointmentAsync(new BookAppointmentRequest
         {
-            CustomerId = Guid.NewGuid(),
+            CustomerId = Customer,
             LawyerId = lawyerId,
             SlotId = slot.SlotId
         });
@@ -301,7 +306,7 @@ public class AppointmentServiceTests
 
         var booked = await svc.BookAppointmentAsync(new BookAppointmentRequest
         {
-            CustomerId = Guid.NewGuid(),
+            CustomerId = Customer,
             LawyerId = lawyerId,
             SlotId = slot.SlotId
         });
@@ -326,7 +331,7 @@ public class AppointmentServiceTests
 
         var booked = await svc.BookAppointmentAsync(new BookAppointmentRequest
         {
-            CustomerId = Guid.NewGuid(),
+            CustomerId = Customer,
             LawyerId = lawyerId,
             SlotId = slot.SlotId
         });
@@ -354,7 +359,7 @@ public class AppointmentServiceTests
 
         var booked = await svc.BookAppointmentAsync(new BookAppointmentRequest
         {
-            CustomerId = Guid.NewGuid(),
+            CustomerId = Customer,
             LawyerId = lawyerId,
             SlotId = slot.SlotId
         });
@@ -378,7 +383,7 @@ public class AppointmentServiceTests
         var svc = CreateService(ctx);
 
         var lawyerId = Guid.NewGuid();
-        var customerId = Guid.NewGuid();
+        var customerId = Customer;
         var tomorrow = DateOnly.FromDateTime(DateTime.UtcNow.AddDays(1));
 
         // Slot 1
@@ -420,16 +425,16 @@ public class AppointmentServiceTests
 
         Assert.NotNull(rescheduled);
         Assert.Equal("Rescheduled", rescheduled.Status);
-        Assert.Equal(slot2.SlotId, rescheduled.SlotId);
+        Assert.NotEqual(slot2.SlotId, rescheduled.SlotId);
         Assert.Equal(dayAfter, rescheduled.Date);
 
         // Verify slot 1 is released
-        var updatedSlot1 = await ctx.AvailabilitySlots.FindAsync(slot1.SlotId);
+        var updatedSlot1 = await ctx.AvailabilitySlots.FindAsync(booked.SlotId);
         Assert.NotNull(updatedSlot1);
         Assert.False(updatedSlot1.IsBooked);
 
         // Verify slot 2 is now booked
-        var updatedSlot2 = await ctx.AvailabilitySlots.FindAsync(slot2.SlotId);
+        var updatedSlot2 = await ctx.AvailabilitySlots.FindAsync(rescheduled.SlotId);
         Assert.NotNull(updatedSlot2);
         Assert.True(updatedSlot2.IsBooked);
 
@@ -458,9 +463,11 @@ public class AppointmentServiceTests
         SeedLawyerWithSlot(ctx, lawyerId, tomorrow, new TimeOnly(10, 0), new TimeOnly(11, 0), isBooked: true);
         SeedLawyerWithSlot(ctx, lawyerId, tomorrow, new TimeOnly(11, 0), new TimeOnly(12, 0), isBooked: false);
 
+        var occupied = ctx.AvailabilitySlots.Single(s => s.IsBooked);
+        ctx.Appointments.Add(new() { AppointmentId = Guid.NewGuid(), LawyerId = lawyerId, CustomerId = Customer, SlotId = occupied.SlotId, Status = "Confirmed" }); ctx.SaveChanges();
         var availableSlots = (await svc.GetAvailableSlotsAsync(lawyerId, tomorrow)).ToList();
 
-        Assert.Equal(2, availableSlots.Count);
+        Assert.Equal(7, availableSlots.Count);
         Assert.All(availableSlots, s => Assert.False(s.IsBooked));
         Assert.Contains(availableSlots, s => s.StartTime == new TimeOnly(9, 0));
         Assert.Contains(availableSlots, s => s.StartTime == new TimeOnly(11, 0));
@@ -480,7 +487,7 @@ public class AppointmentServiceTests
         var appointment = new Appointment
         {
             AppointmentId = Guid.NewGuid(),
-            CustomerId = Guid.NewGuid(),
+            CustomerId = Customer,
             LawyerId = lawyerId,
             SlotId = slot.SlotId,
             Status = "Confirmed",
@@ -500,7 +507,7 @@ public class AppointmentServiceTests
     }
 
     [Fact]
-    public async Task GetAvailableSlotsAsync_AutoProvisionsFourAfternoonSlotsWhenNoneExist()
+    public async Task GetAvailableSlotsAsync_DoesNotInventHoursOrPersistSlotsWhenNoScheduleExists()
     {
         using var ctx = CreateInMemoryDb();
         var svc = CreateService(ctx);
@@ -518,16 +525,9 @@ public class AppointmentServiceTests
         var tomorrow = DateOnly.FromDateTime(DateTime.UtcNow.AddDays(1));
         var slots = (await svc.GetAvailableSlotsAsync(lawyerId, tomorrow)).ToList();
 
-        Assert.Equal(4, slots.Count);
-        Assert.Equal(new TimeOnly(15, 0), slots[0].StartTime);
-        Assert.Equal(new TimeOnly(15, 30), slots[0].EndTime);
-        Assert.Equal(new TimeOnly(15, 30), slots[1].StartTime);
-        Assert.Equal(new TimeOnly(16, 0), slots[1].EndTime);
-        Assert.Equal(new TimeOnly(16, 0), slots[2].StartTime);
-        Assert.Equal(new TimeOnly(16, 30), slots[2].EndTime);
-        Assert.Equal(new TimeOnly(16, 30), slots[3].StartTime);
-        Assert.Equal(new TimeOnly(17, 0), slots[3].EndTime);
-        Assert.All(slots, s => Assert.False(s.IsBooked));
+        Assert.Empty(slots);
+        Assert.Empty(ctx.AvailabilitySlots);
+        Assert.Empty(ctx.LawyerAvailabilities);
     }
 
     [Fact]
@@ -540,9 +540,10 @@ public class AppointmentServiceTests
         var tomorrow = DateOnly.FromDateTime(DateTime.UtcNow.AddDays(1));
         var (_, slot) = SeedLawyerWithSlot(ctx, lawyerId, tomorrow, new TimeOnly(15, 0), new TimeOnly(15, 30));
 
+        (await ctx.Lawyers.FindAsync(lawyerId))!.DefaultAppointmentDurationMinutes = 30; await ctx.SaveChangesAsync();
         var req = new BookAppointmentRequest
         {
-            CustomerId = Guid.NewGuid(),
+            CustomerId = Customer,
             LawyerId = lawyerId,
             SlotId = slot.SlotId,
             Description = "Urgent legal defense needed for commercial dispute.",

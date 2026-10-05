@@ -15,7 +15,9 @@ public sealed class LegalCatalogController(ApplicationDbContext db) : Controller
         .OrderBy(s => s.ServiceName).Select(s => new
         {
             s.LegalServiceId, s.ServiceName, s.Description, s.Category,
-            lawyerCount = s.LawyerLegalServices.Count
+            // Retain the public response key; its value now consistently means eligible active lawyers.
+            lawyerCount = db.LawyerSpecializations.Count(link => link.Lawyer.Status == "Active" &&
+                link.Lawyer.LawyerSpecializations.Count == 1 && link.Specialization.Name.ToLower() == s.Category.ToLower())
         }).ToListAsync());
 
     [Authorize(Roles = "Admin"), HttpGet("api/legal-services/admin")]
@@ -32,7 +34,7 @@ public sealed class LegalCatalogController(ApplicationDbContext db) : Controller
             .Select(area => new
             {
                 area.Name,
-                count = area.LawyerSpecializations.Count(link => link.Lawyer.Status == "Active")
+                count = area.LawyerSpecializations.Count(link => link.Lawyer.Status == "Active" && link.Lawyer.LawyerSpecializations.Count == 1)
             }).ToListAsync();
         var eligibleCounts = areaCounts.ToDictionary(area => area.Name.ToLowerInvariant(), area => area.count);
         return Ok(services.Select(service => new
@@ -54,7 +56,7 @@ public sealed class LegalCatalogController(ApplicationDbContext db) : Controller
 
         var category = service.Category.ToLower();
         var eligibleLawyers = await db.LawyerSpecializations.AsNoTracking()
-            .Where(link => link.Lawyer.Status == "Active" && link.Specialization.Name.ToLower() == category)
+            .Where(link => link.Lawyer.Status == "Active" && link.Lawyer.LawyerSpecializations.Count == 1 && link.Specialization.Name.ToLower() == category)
             .OrderBy(link => link.Lawyer.Name)
             .Select(link => new { link.Lawyer.LawyerId, link.Lawyer.Name })
             .ToListAsync();
@@ -78,7 +80,7 @@ public sealed class LegalCatalogController(ApplicationDbContext db) : Controller
         var practiceArea = await db.Specializations.AsNoTracking()
             .Where(s => s.Name.ToLower() == category.ToLower()).Select(s => s.Name).FirstOrDefaultAsync();
         if (practiceArea == null)
-            return BadRequest(new { message = "Select an existing specialization category." });
+            return BadRequest(new { message = "Select an existing Practice Area." });
 
         var item = new LegalService.API.Models.Entities.LegalService
         {
@@ -92,7 +94,8 @@ public sealed class LegalCatalogController(ApplicationDbContext db) : Controller
         return Created("/api/legal-services", new
         {
             item.LegalServiceId, item.ServiceName, item.Description, item.Category,
-            lawyerCount = 0
+            lawyerCount = await db.LawyerSpecializations.CountAsync(link => link.Lawyer.Status == "Active" &&
+                link.Lawyer.LawyerSpecializations.Count == 1 && link.Specialization.Name.ToLower() == item.Category.ToLower())
         });
     }
 
@@ -110,14 +113,15 @@ public sealed class LegalCatalogController(ApplicationDbContext db) : Controller
         var practiceArea = await db.Specializations.AsNoTracking()
             .Where(s => s.Name.ToLower() == category.ToLower()).Select(s => s.Name).FirstOrDefaultAsync();
         if (practiceArea == null)
-            return BadRequest(new { message = "Select an existing specialization category." });
+            return BadRequest(new { message = "Select an existing Practice Area." });
 
         item.ServiceName = serviceName;
         item.Description = request.Description?.Trim() ?? "";
         item.Category = practiceArea;
         item.UpdatedAt = DateTime.UtcNow;
         await db.SaveChangesAsync();
-        var lawyerCount = await db.LawyerLegalServices.CountAsync(s => s.LegalServiceId == id);
+        var lawyerCount = await db.LawyerSpecializations.CountAsync(link => link.Lawyer.Status == "Active" &&
+            link.Lawyer.LawyerSpecializations.Count == 1 && link.Specialization.Name.ToLower() == item.Category.ToLower());
         return Ok(new { item.LegalServiceId, item.ServiceName, item.Description, item.Category, lawyerCount });
     }
 
@@ -143,7 +147,7 @@ public sealed class LegalCatalogController(ApplicationDbContext db) : Controller
     {
         var name = request.Name.Trim();
         if (await db.Specializations.AnyAsync(s => s.Name.ToLower() == name.ToLower()))
-            return Conflict(new { message = "A specialization with this name already exists." });
+            return Conflict(new { message = "A Practice Area with this name already exists." });
         var item = new Specialization { Name = name, Description = request.Description?.Trim() ?? "" };
         db.Specializations.Add(item);
         await db.SaveChangesAsync();
@@ -184,7 +188,7 @@ public sealed class LegalCatalogController(ApplicationDbContext db) : Controller
         if (item == null) return NotFound();
         var name = request.Name.Trim();
         if (await db.Specializations.AnyAsync(s => s.SpecializationId != id && s.Name.ToLower() == name.ToLower()))
-            return Conflict(new { message = "A specialization with this name already exists." });
+            return Conflict(new { message = "A Practice Area with this name already exists." });
         // The existing service catalog relates categories by name. Keep that link intact on rename.
         var services = await db.LegalServices.Where(s => s.Category.ToLower() == item.Name.ToLower()).ToListAsync();
         foreach (var service in services) service.Category = name;

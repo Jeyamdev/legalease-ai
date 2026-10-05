@@ -3,7 +3,7 @@ import 'config/api_config.dart';
 import 'package:flutter/material.dart';
 import 'auth/auth.dart';
 import 'config/app_theme.dart';
-import 'screens/main_navigation_screen.dart';
+import 'auth/session_router.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -30,18 +30,10 @@ class LegalServiceApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       theme: AppTheme.lightTheme,
       routes: {
-        '/home': (context) => const MainNavigationScreen(),
+        '/home': (context) => const SessionRouter(),
         '/login': (context) => const LoginScreen(),
       },
-      home: ValueListenableBuilder(
-        valueListenable: AuthService.currentUser,
-        builder: (ctx, user, _) {
-          if (user != null) {
-            return const MainNavigationScreen();
-          }
-          return const LoginScreen();
-        },
-      ),
+      home: const SessionRouter(),
     );
   }
 }

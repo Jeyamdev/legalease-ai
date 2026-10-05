@@ -7,7 +7,8 @@ public class Lawyer
 {
     public Guid LawyerId { get; set; }
 
-    public int UserId { get; set; }
+    // Directory profiles can exist without a linked login account.
+    public int? UserId { get; set; }
 
     public User User { get; set; } = null!;
 
@@ -17,6 +18,7 @@ public class Lawyer
     public string PhoneNumber { get; set; } = string.Empty;
     public string Qualification { get; set; } = string.Empty;
     public int Experience { get; set; }
+    public int DefaultAppointmentDurationMinutes { get; set; } = 30;
     public string LicenseNumber { get; set; } = string.Empty;
     public string ProfileDescription { get; set; } = string.Empty;
     public string Status { get; set; } = string.Empty;
@@ -24,6 +26,7 @@ public class Lawyer
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? UpdatedAt { get; set; }
 
+    // Member 1 maintains exactly one link. The collection shape is retained for shared clients.
     public ICollection<LawyerSpecialization> LawyerSpecializations { get; set; }
         = new List<LawyerSpecialization>();
 

@@ -1,6 +1,7 @@
 using System;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
 using LegalService.API.Data;
 using LegalService.API.DTOs.Appointments;
@@ -10,6 +11,7 @@ namespace LegalService.API.Controllers;
 
 [ApiController]
 [Route("api/appointments")]
+[Authorize]
 public class AppointmentsController : ControllerBase
 {
     private readonly IAppointmentService _appointmentService;
@@ -241,6 +243,7 @@ public class AppointmentsController : ControllerBase
     /// <summary>
     /// Get all unbooked slots for a specific lawyer on a given date.
     /// </summary>
+    [AllowAnonymous]
     [HttpGet("available-slots")]
     public async Task<IActionResult> GetAvailableSlots(
         [FromQuery] Guid lawyerId,
@@ -259,6 +262,7 @@ public class AppointmentsController : ControllerBase
     /// <summary>
     /// Check whether a proposed appointment time conflicts with any existing booking for the lawyer.
     /// </summary>
+    [AllowAnonymous]
     [HttpGet("check-conflict")]
     public async Task<IActionResult> CheckConflict(
         [FromQuery] Guid lawyerId,

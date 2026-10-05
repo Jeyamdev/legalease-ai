@@ -24,6 +24,7 @@ export interface LawyerSpecialization {
   name: string;
   description: string;
   lawyerCount?: number;
+  activeLawyerCount?: number;
   legalServiceCount?: number;
 }
 
@@ -83,9 +84,11 @@ export interface LawyerPageFilters {
   specialization?: string;
   search?: string;
   date?: string;
+  status?: string;
 }
 
 export interface CreateLawyerPayload {
+  workingSchedule?: import("./schedulingApi").WorkingSchedule;
   name: string;
   email: string;
   phoneNumber?: string;
@@ -114,11 +117,12 @@ export const lawyersApi = {
     return res.data;
   },
 
-  getPagedLawyers: async ({ page, pageSize, specialization, search, date }: LawyerPageFilters): Promise<PagedLawyers> => {
+  getPagedLawyers: async ({ page, pageSize, specialization, search, date, status }: LawyerPageFilters): Promise<PagedLawyers> => {
     const params: Record<string, string | number> = { page, pageSize };
     if (specialization && specialization !== "All") params.specialization = specialization;
     if (search?.trim()) params.search = search.trim();
     if (date) params.date = date;
+    if (status) params.status = status;
     const res = await apiClient.get<PagedLawyers>("/api/lawyers/search", { params });
     return res.data;
   },

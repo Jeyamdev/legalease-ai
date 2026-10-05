@@ -11,6 +11,9 @@ public class Career
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 
+    // Optional integration link; existing unlinked manual Careers remain compatible.
+    public int? PracticeAreaId { get; set; }
+
     // Navigation properties
     public ICollection<JobApplication> JobApplications { get; set; } = new List<JobApplication>();
 }

@@ -5,6 +5,7 @@ export interface StaffUser {
   name: string;
   email: string;
   role: string;
+  mustChangePassword?: boolean;
   department?: string;
   contact?: string;
   message?: string;
@@ -16,6 +17,7 @@ export interface LoginResponse {
   name: string;
   email: string;
   role: string;
+  mustChangePassword?: boolean;
   department?: string;
   contact?: string;
   message?: string;
@@ -26,6 +28,7 @@ export interface SignupRequest {
   email: string;
   password: string;
   role: string;
+  mustChangePassword?: boolean;
 
   // Lawyer
   phoneNumber?: string;

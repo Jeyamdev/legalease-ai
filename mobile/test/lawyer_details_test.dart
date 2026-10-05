@@ -31,6 +31,6 @@ void main() {
   testWidgets('missing description is stated without invented content', (tester) async {
     await tester.pumpWidget(const MaterialApp(home: SpecializationDetailsScreen(
       specialization: LawyerSpecialization(specializationId: 7, name: 'Property', description: ''))));
-    expect(find.text('No description has been recorded for this specialization.'), findsOneWidget);
+    expect(find.text('No description has been recorded for this Practice Area.'), findsOneWidget);
   });
 }

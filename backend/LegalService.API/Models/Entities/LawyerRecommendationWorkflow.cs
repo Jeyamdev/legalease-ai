@@ -12,6 +12,11 @@ public sealed class LawyerRecommendationWorkflow
     public string RecommendationsJson { get; set; } = "[]";
     public string WarningsJson { get; set; } = "[]";
     public string AuditJson { get; set; } = "[]";
+    public int? ClientId { get; set; }
+    public Guid? SelectedLawyerId { get; set; }
+    public Guid? SelectedSlotId { get; set; }
+    public DateOnly? BookingDate { get; set; }
+    public string ReviewStage { get; set; } = "MATCHES";
     public Guid? ApprovedLawyerId { get; set; }
     public Guid? AppointmentId { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;

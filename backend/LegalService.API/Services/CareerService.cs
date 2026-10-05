@@ -41,8 +41,10 @@ public class CareerService : ICareerService
 
     public async Task<CareerResponse> CreateCareerAsync(CreateCareerRequest request)
     {
+        await ValidatePracticeArea(request.PracticeAreaId);
         var career = new Career
         {
+            PracticeAreaId = request.PracticeAreaId,
             JobTitle = request.JobTitle.Trim(),
             Description = request.Description.Trim(),
             CreatedAt = DateTime.UtcNow,
@@ -64,6 +66,9 @@ public class CareerService : ICareerService
         if (career == null)
             return null;
 
+        await ValidatePracticeArea(request.PracticeAreaId, careerId);
+        // Omitted optional field preserves the link during existing dashboard edits.
+        if (request.PracticeAreaId.HasValue) career.PracticeAreaId = request.PracticeAreaId;
         career.JobTitle = request.JobTitle.Trim();
         career.Description = request.Description.Trim();
         career.UpdatedAt = DateTime.UtcNow;
@@ -148,11 +153,21 @@ public class CareerService : ICareerService
         return MapToResponse(app);
     }
 
+    private async Task ValidatePracticeArea(int? areaId, int? excludeId = null)
+    {
+        if (!areaId.HasValue) return;
+        if (!await _context.Specializations.AnyAsync(s => s.SpecializationId == areaId))
+            throw new LegalService.API.Infrastructure.ApiException(400, "Practice Area does not exist.");
+        if (await _context.Careers.AnyAsync(c => c.PracticeAreaId == areaId && c.CareerId != excludeId))
+            throw new LegalService.API.Infrastructure.ApiException(409, "Recruitment already in progress for this Practice Area.");
+    }
+
     private static CareerResponse MapToResponse(Career career)
     {
         return new CareerResponse
         {
             CareerId = career.CareerId,
+            PracticeAreaId = career.PracticeAreaId,
             JobTitle = career.JobTitle,
             Description = career.Description,
             ApplicationsCount = career.JobApplications?.Count ?? 0,

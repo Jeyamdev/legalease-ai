@@ -5,6 +5,7 @@ class UserModel {
   final String email;
   final String role;
   final String? token;
+  final bool mustChangePassword;
 
   const UserModel({
     required this.userId,
@@ -13,6 +14,7 @@ class UserModel {
     required this.email,
     required this.role,
     this.token,
+    this.mustChangePassword = false,
   });
 
   String get userType => role;
@@ -25,6 +27,7 @@ class UserModel {
       email: (json['email'] ?? '').toString(),
       role: (json['role'] ?? 'User').toString(),
       token: json['token']?.toString(),
+      mustChangePassword: json['mustChangePassword'] == true,
     );
   }
 
@@ -35,6 +38,7 @@ class UserModel {
       'fullName': fullName,
       'email': email,
       'role': role,
+      'mustChangePassword': mustChangePassword,
       if (token != null) 'token': token,
     };
   }

@@ -32,6 +32,8 @@ public class UpdateLawyerRequest
     // Legacy clients may continue sending Category; new clients use the catalog ID.
     public int? SpecializationId { get; set; }
 
+    public LegalService.API.DTOs.Scheduling.ScheduleRequest? WorkingSchedule { get; set; }
+
     public string Category { get; set; } = string.Empty;
 
 }

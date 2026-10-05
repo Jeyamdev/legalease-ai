@@ -509,6 +509,7 @@ frontend/build/
 # Flutter / Dart
 .dart_tool/
 mobile/build/
+mobile/android/build/
 mobile/.flutter-plugins
 mobile/.flutter-plugins-dependencies
 mobile/.packages
@@ -524,4 +525,8 @@ mobile/.pub/
 # Local Uploads & Scratch Scripts
 backend/LegalService.API/Storage/Uploads/
 scratch_*.py
+sample-lawyer.json
 ai-service/data/
+
+# Keep personal editor appearance out of feature commits.
+.vscode/settings.json

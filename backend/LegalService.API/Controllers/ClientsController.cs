@@ -10,15 +10,30 @@ using LegalService.API.Models.Entities;
 
 namespace LegalService.API.Controllers;
 
+[Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin")]
 [ApiController]
 [Route("api/clients")]
 public class ClientsController : ControllerBase
 {
     private readonly ApplicationDbContext _context;
+    private readonly LegalService.API.Services.Clients.ClientService clients;
 
-    public ClientsController(ApplicationDbContext context)
+    public ClientsController(ApplicationDbContext context, LegalService.API.Authentication.Services.IPasswordService passwords)
     {
         _context = context;
+        clients = new(context, passwords);
+    }
+
+    [HttpGet("search")]
+    public async Task<IActionResult> Search([FromQuery] string? search, CancellationToken ct) => Ok(await clients.SearchAsync(search, ct));
+    [HttpGet("{id:int}/summary")]
+    public async Task<IActionResult> Summary(int id, CancellationToken ct) => Ok(await clients.GetAsync(id, ct));
+    [HttpPost]
+    public async Task<IActionResult> Register(LegalService.API.DTOs.Clients.RegisterClientRequest request, CancellationToken ct)
+    {
+        try { var client = await clients.RegisterAsync(request, ct); return CreatedAtAction(nameof(Summary), new { id = client.UserId }, client); }
+        catch (LegalService.API.DTOs.Clients.DuplicateClientException error)
+        { return Conflict(new { message = error.Message, existingClient = error.ExistingClient }); }
     }
 
     /// <summary>

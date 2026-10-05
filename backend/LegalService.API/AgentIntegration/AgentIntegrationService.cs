@@ -3,6 +3,7 @@ using System.Net.Http;
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Threading.Tasks;
+using System.Threading;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using LegalService.API.Data;
@@ -27,7 +28,11 @@ public class AgentIntegrationService : IAgentIntegrationService
         _httpClient = httpClient;
         _context = context;
         _logger = logger;
-        _aiServiceBaseUrl = configuration["AiService:BaseUrl"] ?? "http://localhost:8001";
+        _aiServiceBaseUrl = configuration["AiService:BaseUrl"]
+            ?? throw new InvalidOperationException("AiService:BaseUrl must be configured.");
+        var serviceKey = configuration["AI_SERVICE_API_KEY"];
+        if (!string.IsNullOrWhiteSpace(serviceKey))
+            _httpClient.DefaultRequestHeaders.Add("X-AI-Service-Key", serviceKey);
     }
 
     private static int ParseIntId(object? val)
@@ -115,9 +120,7 @@ public class AgentIntegrationService : IAgentIntegrationService
     {
         int approvedByInt = ParseIntId(approverId);
         if (approvedByInt <= 0)
-        {
-            approvedByInt = 1; // Default to Admin ID 1
-        }
+            throw new ArgumentException("Authenticated approver ID is required.", nameof(approverId));
 
         var payload = new
         {
@@ -279,6 +282,22 @@ public class AgentIntegrationService : IAgentIntegrationService
             _logger.LogError(ex, "Error getting chat session status {SessionId}", sessionId);
             return null;
         }
+    }
+
+    public async Task<object?> GetChatMessagesAsync(string sessionId, CancellationToken cancellationToken = default)
+    {
+        using var response = await _httpClient.GetAsync(
+            $"{_aiServiceBaseUrl}/api/agent/chat/{Uri.EscapeDataString(sessionId)}/messages", cancellationToken);
+        if (!response.IsSuccessStatusCode) return null;
+        return await response.Content.ReadFromJsonAsync<object>(cancellationToken: cancellationToken);
+    }
+
+    public async Task<object?> GetRequestStatusAsync(int requestId, CancellationToken cancellationToken = default)
+    {
+        using var response = await _httpClient.GetAsync(
+            $"{_aiServiceBaseUrl}/api/agent/request/{requestId}/status", cancellationToken);
+        if (!response.IsSuccessStatusCode) return null;
+        return await response.Content.ReadFromJsonAsync<object>(cancellationToken: cancellationToken);
     }
 
     public async Task<Dictionary<int, string>> GetChatClientNamesAsync()

@@ -77,7 +77,7 @@ public sealed class LawyerManagementHttpTests : IAsyncLifetime
                 ValidateLifetime = true, ValidateIssuerSigningKey = true,
                 IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(Key))
             });
-        builder.Services.AddAuthorization();
+        builder.Services.AddAuthorization(options => options.AddPolicy("UserOrAi", policy => policy.RequireAuthenticatedUser()));
         _app = builder.Build();
         _app.UseExceptionHandler();
         _app.UseAuthentication();

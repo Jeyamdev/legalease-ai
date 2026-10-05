@@ -33,6 +33,7 @@ public class ApplicationDbContext : DbContext
     public DbSet<JobApplication> JobApplications { get; set; }
     public DbSet<ServiceRequest> ServiceRequests { get; set; }
     public DbSet<AgentWorkflow> AgentWorkflows { get; set; }
+    public DbSet<AgentSessionState> AgentSessionStates { get; set; }
     public DbSet<AgentStep> AgentSteps { get; set; }
     public DbSet<ToolExecution> ToolExecutions { get; set; }
     public DbSet<ValidationResult> ValidationResults { get; set; }
@@ -49,6 +50,13 @@ public class ApplicationDbContext : DbContext
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
+        modelBuilder.Entity<AgentSessionState>(entity =>
+        {
+            entity.HasKey(x => new { x.Kind, x.SessionId });
+            entity.Property(x => x.Kind).HasMaxLength(20);
+            entity.Property(x => x.SessionId).HasMaxLength(64);
+            entity.Property(x => x.StateJson).HasColumnType("jsonb");
+        });
         modelBuilder.Entity<Lawyer>().Property(l => l.DefaultAppointmentDurationMinutes).HasDefaultValue(30);
         modelBuilder.Entity<Lawyer>().ToTable(t => t.HasCheckConstraint("CK_Lawyer_Duration", "\"DefaultAppointmentDurationMinutes\" BETWEEN 15 AND 240"));
         modelBuilder.Entity<LawyerWorkingSchedule>(e => {

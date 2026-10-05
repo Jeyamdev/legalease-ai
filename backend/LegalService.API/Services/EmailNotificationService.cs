@@ -38,7 +38,12 @@ public class EmailNotificationService : IEmailNotificationService
             var enableSsl = bool.TryParse(emailSettings["EnableSsl"], out var ssl) ? ssl : true;
             var senderEmail = emailSettings["SenderEmail"] ?? "vijayakumarvithusan2912@gmail.com";
             var senderName = emailSettings["SenderName"] ?? "VShop Legal Services";
-            var appPassword = emailSettings["AppPassword"] ?? "wdrhwjnqmwqdgygy";
+            var appPassword = emailSettings["AppPassword"];
+            if (string.IsNullOrWhiteSpace(appPassword))
+            {
+                _logger.LogWarning("SMTP password is not configured; email was not sent.");
+                return;
+            }
             var fallbackRecipient = emailSettings["FallbackRecipientEmail"] ?? "vijayakumarvithusan2912@gmail.com";
 
             // Determine effective recipient
@@ -120,7 +125,12 @@ public class EmailNotificationService : IEmailNotificationService
             var enableSsl = bool.TryParse(emailSettings["EnableSsl"], out var ssl) ? ssl : true;
             var senderEmail = emailSettings["SenderEmail"] ?? "vijayakumarvithusan2912@gmail.com";
             var senderName = emailSettings["SenderName"] ?? "VShop Legal Services";
-            var appPassword = emailSettings["AppPassword"] ?? "wdrhwjnqmwqdgygy";
+            var appPassword = emailSettings["AppPassword"];
+            if (string.IsNullOrWhiteSpace(appPassword))
+            {
+                _logger.LogWarning("SMTP password is not configured; email was not sent.");
+                return;
+            }
             var fallbackRecipient = emailSettings["FallbackRecipientEmail"] ?? "vijayakumarvithusan2912@gmail.com";
 
             // Determine effective recipient

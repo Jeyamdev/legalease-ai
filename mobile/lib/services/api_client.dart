@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -43,10 +42,9 @@ class ApiClient {
   static Future<dynamic> get(
     String endpoint, {
     Map<String, String>? queryParams,
-    String? customBaseUrl,
     Duration? timeout,
   }) async {
-    final baseUrl = customBaseUrl ?? ApiConfig.backendUrl.value;
+    final baseUrl = ApiConfig.backendUrl.value;
     var uri = Uri.parse('$baseUrl$endpoint');
     if (queryParams != null && queryParams.isNotEmpty) {
       uri = uri.replace(queryParameters: queryParams);
@@ -59,41 +57,11 @@ class ApiClient {
           .timeout(timeout ?? requestTimeout);
       return _handleResponse(response);
     } on TimeoutException {
-      if (customBaseUrl == null) {
-        final failover = _getFailoverUrl(baseUrl);
-        if (failover != null) {
-          try {
-            final res = await get(
-              endpoint,
-              queryParams: queryParams,
-              customBaseUrl: failover,
-              timeout: const Duration(seconds: 5),
-            );
-            _applyFailoverSuccess(failover);
-            return res;
-          } catch (_) {}
-        }
-      }
       throw ApiException(
         'Connection timed out reaching $baseUrl. Please verify the server is running.',
         408,
       );
     } on SocketException catch (e) {
-      if (customBaseUrl == null) {
-        final failover = _getFailoverUrl(baseUrl);
-        if (failover != null) {
-          try {
-            final res = await get(
-              endpoint,
-              queryParams: queryParams,
-              customBaseUrl: failover,
-              timeout: const Duration(seconds: 5),
-            );
-            _applyFailoverSuccess(failover);
-            return res;
-          } catch (_) {}
-        }
-      }
       throw ApiException(
         'Cannot connect to server at $baseUrl (${e.message}). Check server status and USB/Wi-Fi.',
         503,
@@ -108,11 +76,10 @@ class ApiClient {
     String endpoint,
     dynamic body, {
     Map<String, String>? queryParams,
-    String? customBaseUrl,
     Duration? timeout,
     bool retryOnConnectionFailure = true,
   }) async {
-    final baseUrl = customBaseUrl ?? ApiConfig.backendUrl.value;
+    final baseUrl = ApiConfig.backendUrl.value;
     var uri = Uri.parse('$baseUrl$endpoint');
     if (queryParams != null && queryParams.isNotEmpty) {
       uri = uri.replace(queryParameters: queryParams);
@@ -129,43 +96,11 @@ class ApiClient {
           .timeout(timeout ?? requestTimeout);
       return _handleResponse(response);
     } on TimeoutException {
-      if (customBaseUrl == null && retryOnConnectionFailure) {
-        final failover = _getFailoverUrl(baseUrl);
-        if (failover != null) {
-          try {
-            final res = await post(
-              endpoint,
-              body,
-              queryParams: queryParams,
-              customBaseUrl: failover,
-              timeout: const Duration(seconds: 5),
-            );
-            _applyFailoverSuccess(failover);
-            return res;
-          } catch (_) {}
-        }
-      }
       throw ApiException(
         'Connection timed out reaching $baseUrl. Please verify the server is running.',
         408,
       );
     } on SocketException catch (e) {
-      if (customBaseUrl == null && retryOnConnectionFailure) {
-        final failover = _getFailoverUrl(baseUrl);
-        if (failover != null) {
-          try {
-            final res = await post(
-              endpoint,
-              body,
-              queryParams: queryParams,
-              customBaseUrl: failover,
-              timeout: const Duration(seconds: 5),
-            );
-            _applyFailoverSuccess(failover);
-            return res;
-          } catch (_) {}
-        }
-      }
       throw ApiException(
         'Cannot connect to server at $baseUrl (${e.message}). Check server status and USB/Wi-Fi.',
         503,
@@ -216,36 +151,6 @@ class ApiClient {
     }
   }
 
-  static String? _getFailoverUrl(String currentUrl) {
-    if (kIsWeb) return null;
-    final lanHost =
-        Uri.tryParse(ApiConfig.lanBackendUrl)?.host ?? '10.88.177.23';
-    if (currentUrl.contains('localhost') || currentUrl.contains('127.0.0.1')) {
-      return currentUrl
-          .replaceAll('localhost', lanHost)
-          .replaceAll('127.0.0.1', lanHost);
-    }
-    if (currentUrl.contains(lanHost) ||
-        currentUrl.contains('172.27.62.23') ||
-        currentUrl.contains('10.164.')) {
-      return ApiConfig.defaultBackendUrl;
-    }
-    return null;
-  }
-
-  static void _applyFailoverSuccess(String failoverUrl) {
-    final lanHost =
-        Uri.tryParse(ApiConfig.lanBackendUrl)?.host ?? '10.88.177.23';
-    if (failoverUrl.contains(lanHost)) {
-      ApiConfig.setBackendUrl(ApiConfig.lanBackendUrl);
-      ApiConfig.setAiServiceUrl(ApiConfig.lanAiUrl);
-    } else if (failoverUrl.contains('localhost') ||
-        failoverUrl.contains('127.0.0.1')) {
-      ApiConfig.setBackendUrl(ApiConfig.defaultBackendUrl);
-      ApiConfig.setAiServiceUrl(ApiConfig.defaultAiUrl);
-    }
-  }
-
   static Future<dynamic> uploadFile(
     String endpoint, {
     required String fileFieldName,
@@ -253,9 +158,8 @@ class ApiClient {
     List<int>? fileBytes,
     String? filePath,
     Map<String, String>? fields,
-    String? customBaseUrl,
   }) async {
-    final baseUrl = customBaseUrl ?? ApiConfig.backendUrl.value;
+    final baseUrl = ApiConfig.backendUrl.value;
     final uri = Uri.parse('$baseUrl$endpoint');
 
     try {

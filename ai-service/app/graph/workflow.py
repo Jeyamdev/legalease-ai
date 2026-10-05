@@ -61,10 +61,10 @@ logger = logging.getLogger(__name__)
 import json
 import re
 from pathlib import Path
+from app.graph.state_store import read_state, write_state
 
 _state_store: dict[str, AgentState] = {}
 _SESSIONS_DIR = Path(__file__).parent.parent.parent / "data" / "sessions"
-_SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def _extract_name_from_messages(messages: list[dict]) -> str | None:
@@ -82,14 +82,9 @@ def get_state(session_id: str) -> AgentState | None:
     state = _state_store.get(session_id)
     if state is None:
         # Check disk storage for existing session
-        session_file = _SESSIONS_DIR / f"{session_id}.json"
-        if session_file.exists():
-            try:
-                state = json.loads(session_file.read_text(encoding="utf-8"))
-                _state_store[session_id] = state
-                logger.info("Restored session '%s' from disk storage.", session_id)
-            except Exception as e:
-                logger.warning("Failed to load session file %s: %s", session_file, e)
+        state = read_state("chat", session_id, _SESSIONS_DIR)
+        if state is not None:
+            _state_store[session_id] = state
 
     if state is not None and not state.get("client_name"):
         recovered = _extract_name_from_messages(state.get("messages", []))
@@ -101,13 +96,8 @@ def get_state(session_id: str) -> AgentState | None:
 
 
 def save_state(session_id: str, state: AgentState) -> None:
+    write_state("chat", session_id, state, _SESSIONS_DIR)
     _state_store[session_id] = state
-    # Persist to disk so restarts or code reloads never lose user chat sessions
-    try:
-        session_file = _SESSIONS_DIR / f"{session_id}.json"
-        session_file.write_text(json.dumps(state, indent=2, default=str), encoding="utf-8")
-    except Exception as e:
-        logger.warning("Failed to persist session '%s' to disk: %s", session_id, e)
 
 
 def create_session(customer_id: str, session_id: str | None = None) -> tuple[str, AgentState]:

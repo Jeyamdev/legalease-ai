@@ -1,5 +1,6 @@
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Authorization;
 using LegalService.API.DTOs.Requests;
 using LegalService.API.Interfaces;
 
@@ -7,6 +8,7 @@ namespace LegalService.API.Controllers;
 
 [ApiController]
 [Route("api/job-applications")]
+[Authorize(Roles = "Admin,Clerk")]
 public class JobApplicationsController : ControllerBase
 {
     private readonly ICareerService _careerService;
@@ -43,6 +45,7 @@ public class JobApplicationsController : ControllerBase
     /// Submit a new job application.
     /// </summary>
     [HttpPost]
+    [AllowAnonymous]
     public async Task<IActionResult> Create([FromBody] CreateJobApplicationRequest request)
     {
         if (!ModelState.IsValid)

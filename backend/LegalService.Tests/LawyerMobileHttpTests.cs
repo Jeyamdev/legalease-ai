@@ -77,7 +77,7 @@ public sealed class LawyerMobileHttpTests : IAsyncLifetime
         builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJwtBearer(o => o.TokenValidationParameters = new() {
             ValidateIssuer = true, ValidIssuer = "tests", ValidateAudience = true, ValidAudience = "tests", ValidateLifetime = true,
             IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(Key)), ClockSkew = TimeSpan.Zero });
-        builder.Services.AddAuthorization();
+        builder.Services.AddAuthorization(options => options.AddPolicy("UserOrAi", policy => policy.RequireAuthenticatedUser()));
         app = builder.Build(); app.UseExceptionHandler(); app.UseAuthentication(); app.UseAuthorization(); app.MapControllers(); await app.StartAsync();
         client = new HttpClient { BaseAddress = new Uri(app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single()) };
         using var scope = app.Services.CreateScope(); var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();

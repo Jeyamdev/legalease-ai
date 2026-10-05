@@ -90,9 +90,7 @@ async def send_chat_message(session_id: str, request: SendChatMessageRequest):
     """
     state = get_state(session_id)
     if state is None:
-        # Gracefully auto-initialize session if reloaded or testing directly in Swagger
-        logger.info("Session '%s' not found in memory; auto-initializing.", session_id)
-        _, state = create_session(customer_id="1", session_id=session_id)
+        raise HTTPException(status_code=404, detail="Chat session not found")
 
     # Ensure backend request_id is initialized if service is known
     if not state.get("request_id") and state.get("service_id"):
@@ -284,8 +282,7 @@ async def get_chat_session_status(session_id: str):
     """
     state = get_state(session_id)
     if state is None:
-        # Gracefully auto-initialize session if reloaded or testing directly in Swagger
-        _, state = create_session(customer_id="1", session_id=session_id)
+        raise HTTPException(status_code=404, detail="Chat session not found")
 
     statuses = state.get("document_statuses", {})
     provided = [dt for dt, ds in statuses.items() if ds.get("status") in ("accepted", "accepted_with_flag")]
@@ -402,7 +399,7 @@ async def upload_chat_document(
     """
     state = get_state(session_id)
     if state is None:
-        _, state = create_session(customer_id="1", session_id=session_id)
+        raise HTTPException(status_code=404, detail="Chat session not found")
 
     # 1. Determine target document type
     target_type = doc_type
@@ -893,35 +890,17 @@ def _next_expected_doc_type(state: AgentState | dict) -> str | None:
 
 def _find_session_by_workflow_id(workflow_id: str) -> str | None:
     """Find a session_id by its workflow_id."""
-    from app.graph.workflow import _state_store, _SESSIONS_DIR
-    for sid, state in _state_store.items():
+    for sid, state in _all_states():
         if state.get("workflow_id") == workflow_id:
             return sid
-    import json
-    for p in _SESSIONS_DIR.glob("*.json"):
-        try:
-            data = json.loads(p.read_text(encoding="utf-8"))
-            if data.get("workflow_id") == workflow_id:
-                _state_store[p.stem] = data
-                return p.stem
-        except Exception:
-            pass
     return None
 
 
 def _all_states():
     """Return all (session_id, state) pairs — from memory first, then disk."""
     from app.graph.workflow import _state_store, _SESSIONS_DIR
-    import json
-
-    # Seed memory with any on-disk sessions not yet loaded
-    for p in _SESSIONS_DIR.glob("*.json"):
-        sid = p.stem
-        if sid not in _state_store:
-            try:
-                data = json.loads(p.read_text(encoding="utf-8"))
-                _state_store[sid] = data
-            except Exception:
-                pass
+    from app.graph.state_store import all_states
+    for sid, state in all_states("chat", _SESSIONS_DIR):
+        _state_store[sid] = state
 
     return list(_state_store.items())

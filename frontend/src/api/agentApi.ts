@@ -1,8 +1,4 @@
 import { apiClient } from "./apiClient";
-import axios from "axios";
-
-const AI_SERVICE_URL = import.meta.env.VITE_AI_SERVICE_URL || "http://localhost:8001";
-const aiClient = axios.create({ baseURL: AI_SERVICE_URL });
 
 export interface ClerkRecommendation {
   clerk_id: number;
@@ -65,11 +61,10 @@ export const agentApi = {
     return res.data;
   },
 
-  submitApproval: async (workflowId: string, approverId: string, decision: "APPROVE" | "REJECT" | "REQUEST_REVISION", comment = "") => {
+  submitApproval: async (workflowId: string, decision: "APPROVE" | "REJECT" | "REQUEST_REVISION", comment = "") => {
     const res = await apiClient.post(
       `/api/agent/workflows/${workflowId}/approve`,
-      { decision, comment },
-      { params: { approverId } }
+      { decision, comment }
     );
     return res.data;
   },
@@ -84,15 +79,15 @@ export const agentApi = {
     return res.data;
   },
 
-  /** Fetch all chat messages for a session from the AI service */
+  /** Fetch chat history through the ASP.NET API. */
   getChatMessages: async (sessionId: string): Promise<ChatMessagesResponse> => {
-    const res = await aiClient.get<ChatMessagesResponse>(`/api/agent/chat/${sessionId}/messages`);
+    const res = await apiClient.get<ChatMessagesResponse>(`/api/agent/chat/${sessionId}/messages`);
     return res.data;
   },
 
-  /** Find a workflow/session by requestId via the AI service */
+  /** Find a workflow/session by request ID through the ASP.NET API. */
   getRequestStatus: async (requestId: string | number) => {
-    const res = await aiClient.get(`/api/agent/request/${requestId}/status`);
+    const res = await apiClient.get(`/api/agent/request/${requestId}/status`);
     return res.data as { request_id: number; phase: string; workflow_id: string; missing_documents: string[] };
   },
 };

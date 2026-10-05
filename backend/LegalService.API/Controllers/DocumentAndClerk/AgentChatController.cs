@@ -3,11 +3,14 @@ using System.Threading.Tasks;
 using Microsoft.AspNetCore.Mvc;
 using LegalService.API.AgentIntegration;
 using LegalService.API.DTOs.Agent;
+using Microsoft.AspNetCore.Authorization;
+using System.Security.Claims;
 
 namespace LegalService.API.Controllers;
 
 [ApiController]
 [Route("api/agent/chat")]
+[Authorize(Roles = "Admin,Clerk,Customer")]
 public class AgentChatController : ControllerBase
 {
     private readonly IAgentIntegrationService _agentService;
@@ -23,7 +26,10 @@ public class AgentChatController : ControllerBase
     [HttpPost("session")]
     public async Task<IActionResult> CreateSession([FromBody] CreateAgentChatSessionRequest request)
     {
-        var customerId = string.IsNullOrWhiteSpace(request?.CustomerId) ? "guest" : request.CustomerId;
+        var customerId = User.IsInRole("Customer")
+            ? User.FindFirstValue(ClaimTypes.NameIdentifier)!
+            : request?.CustomerId;
+        if (string.IsNullOrWhiteSpace(customerId)) return BadRequest(new { message = "Customer ID is required." });
         var session = await _agentService.CreateChatSessionAsync(customerId);
         if (session == null)
         {
@@ -45,6 +51,8 @@ public class AgentChatController : ControllerBase
         {
             return BadRequest(new { message = "sessionId is required in URL." });
         }
+
+        if (!await CanAccessSession(sessionId)) return Forbid();
 
         var reply = await _agentService.SendChatMessageAsync(
             sessionId,
@@ -77,6 +85,24 @@ public class AgentChatController : ControllerBase
             return NotFound(new { message = $"Chat session '{sessionId}' not found or unavailable." });
         }
 
+        if (User.IsInRole("Customer") && status.CustomerId != User.FindFirstValue(ClaimTypes.NameIdentifier))
+            return Forbid();
+
         return Ok(status);
+    }
+
+    [HttpGet("{sessionId}/messages")]
+    [Authorize(Roles = "Admin,Clerk")]
+    public async Task<IActionResult> GetMessages(string sessionId, CancellationToken cancellationToken)
+    {
+        var result = await _agentService.GetChatMessagesAsync(sessionId, cancellationToken);
+        return result is null ? NotFound() : Ok(result);
+    }
+
+    private async Task<bool> CanAccessSession(string sessionId)
+    {
+        if (!User.IsInRole("Customer")) return true;
+        var status = await _agentService.GetChatSessionStatusAsync(sessionId);
+        return status is not null && status.CustomerId == User.FindFirstValue(ClaimTypes.NameIdentifier);
     }
 }

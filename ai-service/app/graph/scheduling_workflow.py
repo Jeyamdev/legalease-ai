@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from langgraph.graph import StateGraph, END
 
 from app.graph.scheduling_state import SchedulingAgentState, initial_scheduling_state
+from app.graph.state_store import read_state, write_state
 from app.agents.scheduling.classifier import classify_intent_node
 from app.agents.scheduling.matchmaker import match_lawyers_node
 from app.agents.scheduling.slot_resolver import resolve_slots_node
@@ -28,7 +29,6 @@ logger = logging.getLogger(__name__)
 
 # Disk persistence directory for scheduling sessions
 _SCHEDULING_SESSIONS_DIR = Path(__file__).parent.parent.parent / "data" / "scheduling_sessions"
-_SCHEDULING_SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
 
 _scheduling_state_store: dict[str, SchedulingAgentState] = {}
 
@@ -37,25 +37,16 @@ def get_scheduling_state(session_id: str) -> SchedulingAgentState | None:
     """Retrieve scheduling state from in-memory cache or disk JSON."""
     state = _scheduling_state_store.get(session_id)
     if state is None:
-        file_path = _SCHEDULING_SESSIONS_DIR / f"{session_id}.json"
-        if file_path.exists():
-            try:
-                state = json.loads(file_path.read_text(encoding="utf-8"))
-                _scheduling_state_store[session_id] = state
-                logger.info("Restored scheduling session '%s' from disk", session_id)
-            except Exception as e:
-                logger.warning("Failed to read scheduling session file: %s", e)
+        state = read_state("scheduling", session_id, _SCHEDULING_SESSIONS_DIR)
+        if state is not None:
+            _scheduling_state_store[session_id] = state
     return state
 
 
 def save_scheduling_state(session_id: str, state: SchedulingAgentState) -> None:
     """Save state to cache and persist to disk."""
+    write_state("scheduling", session_id, state, _SCHEDULING_SESSIONS_DIR)
     _scheduling_state_store[session_id] = state
-    try:
-        file_path = _SCHEDULING_SESSIONS_DIR / f"{session_id}.json"
-        file_path.write_text(json.dumps(state, indent=2, default=str), encoding="utf-8")
-    except Exception as e:
-        logger.warning("Failed to persist scheduling session '%s': %s", session_id, e)
 
 
 def create_scheduling_session(

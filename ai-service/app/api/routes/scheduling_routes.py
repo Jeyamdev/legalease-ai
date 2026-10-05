@@ -76,7 +76,7 @@ async def send_scheduling_message(session_id: str, req: SendSchedulingMessageReq
     """
     state = get_scheduling_state(session_id)
     if state is None:
-        session_id, state = create_scheduling_session(session_id=session_id)
+        raise HTTPException(status_code=404, detail="Scheduling session not found")
 
     updated = await process_scheduling_message(
         session_id=session_id,

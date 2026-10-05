@@ -1,6 +1,8 @@
 using System;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Authorization;
+using LegalService.API.Authentication;
 using LegalService.API.DTOs.Requests;
 using LegalService.API.Interfaces;
 
@@ -8,13 +10,17 @@ namespace LegalService.API.Controllers;
 
 [ApiController]
 [Route("api/clerks")]
+[Authorize(Policy = "UserOrAi")]
 public class ClerksController : ControllerBase
 {
     private readonly IClerkService _clerkService;
+    private readonly IConfiguration _config;
+    private bool CanRead => RequestAccess.IsStaff(User) || RequestAccess.IsInternal(HttpContext, _config);
 
-    public ClerksController(IClerkService clerkService)
+    public ClerksController(IClerkService clerkService, IConfiguration config)
     {
         _clerkService = clerkService;
+        _config = config;
     }
 
     /// <summary>
@@ -23,6 +29,7 @@ public class ClerksController : ControllerBase
     [HttpGet]
     public async Task<IActionResult> GetAll()
     {
+        if (!CanRead) return Forbid();
         var clerks = await _clerkService.GetAllClerksAsync();
         return Ok(clerks);
     }
@@ -33,6 +40,7 @@ public class ClerksController : ControllerBase
     [HttpGet("{id:int}")]
     public async Task<IActionResult> GetById(int id)
     {
+        if (!CanRead) return Forbid();
         var clerk = await _clerkService.GetClerkByIdAsync(id);
         if (clerk == null)
             return NotFound(new { message = $"Clerk with ID '{id}' was not found." });
@@ -44,6 +52,7 @@ public class ClerksController : ControllerBase
     /// Register an existing user as a clerk.
     /// </summary>
     [HttpPost]
+    [Authorize(Roles = "Admin")]
     public async Task<IActionResult> Create([FromBody] CreateClerkRequest request)
     {
         if (!ModelState.IsValid)
@@ -57,6 +66,7 @@ public class ClerksController : ControllerBase
     /// Update clerk details (contact, department).
     /// </summary>
     [HttpPut("{id:int}")]
+    [Authorize(Roles = "Admin")]
     public async Task<IActionResult> Update(int id, [FromBody] UpdateClerkRequest request)
     {
         if (!ModelState.IsValid)
@@ -73,6 +83,7 @@ public class ClerksController : ControllerBase
     /// Deactivate a clerk.
     /// </summary>
     [HttpDelete("{id:int}")]
+    [Authorize(Roles = "Admin")]
     public async Task<IActionResult> Deactivate(int id)
     {
         var success = await _clerkService.DeactivateClerkAsync(id);
@@ -88,6 +99,7 @@ public class ClerksController : ControllerBase
     [HttpGet("{id:int}/requests")]
     public async Task<IActionResult> GetAssignedRequests(int id)
     {
+        if (!CanRead) return Forbid();
         var requests = await _clerkService.GetAssignedRequestsAsync(id);
         return Ok(requests);
     }

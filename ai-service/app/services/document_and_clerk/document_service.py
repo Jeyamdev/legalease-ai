@@ -109,15 +109,8 @@ async def analyze_document_file(
         except Exception as e:
             logger.warning("Backend download failed for file_id=%s: %s", file_id, e)
 
-        if not raw_bytes or len(raw_bytes) < 100 or raw_bytes.startswith(b"{\"") or raw_bytes.startswith(b"{\n"):
-            sample_bytes, sample_ct = _get_sample_document_bytes(expected_doc_type, metadata.get("fileName"))
-            if sample_bytes:
-                logger.info("Using local sample document fallback for doc=%s file_id=%s", expected_doc_type, file_id)
-                raw_bytes = sample_bytes
-                content_type = sample_ct
-
         if not raw_bytes:
-            return _error_analysis("Could not download or locate document data. Please try re-uploading.")
+            return _error_analysis("Could not download the requested document. Please try re-uploading.")
 
         if raw_bytes.startswith(b"%PDF-"):
             content_type = "application/pdf"

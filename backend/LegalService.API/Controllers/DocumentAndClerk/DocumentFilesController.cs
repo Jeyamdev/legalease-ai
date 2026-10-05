@@ -3,18 +3,33 @@ using System.Threading.Tasks;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using LegalService.API.Interfaces;
+using LegalService.API.Authentication;
+using LegalService.API.Data;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.EntityFrameworkCore;
 
 namespace LegalService.API.Controllers;
 
 [ApiController]
 [Route("api")]
+[Authorize(Policy = "UserOrAi")]
 public class DocumentFilesController : ControllerBase
 {
     private readonly IDocumentFileService _fileService;
+    private readonly ApplicationDbContext _db;
+    private readonly IConfiguration _config;
+    private Task<bool> CanAccess(int requestId) => RequestAccess.CanAccessDocumentationRequestAsync(HttpContext, _config, _db, requestId);
+    private async Task<bool> CanAccessFile(int id)
+    {
+        var requestId = await _db.DocumentFiles.AsNoTracking().Where(f => f.FileId == id).Select(f => f.RequestId).FirstOrDefaultAsync();
+        return requestId > 0 && await CanAccess(requestId);
+    }
 
-    public DocumentFilesController(IDocumentFileService fileService)
+    public DocumentFilesController(IDocumentFileService fileService, ApplicationDbContext db, IConfiguration config)
     {
         _fileService = fileService;
+        _db = db;
+        _config = config;
     }
 
     /// <summary>
@@ -24,6 +39,8 @@ public class DocumentFilesController : ControllerBase
     [Consumes("multipart/form-data")]
     public async Task<IActionResult> Upload(int requestId, IFormFile file)
     {
+        if (!(await CanAccess(requestId))) return Forbid();
+
         if (file == null || file.Length == 0)
         {
             return BadRequest(new { message = "No file uploaded. Please select a valid document." });
@@ -39,6 +56,8 @@ public class DocumentFilesController : ControllerBase
     [HttpGet("documentation-requests/{requestId:int}/files")]
     public async Task<IActionResult> GetByRequestId(int requestId)
     {
+        if (!(await CanAccess(requestId))) return Forbid();
+
         var files = await _fileService.GetFilesByRequestIdAsync(requestId);
         return Ok(files);
     }
@@ -49,6 +68,8 @@ public class DocumentFilesController : ControllerBase
     [HttpGet("document-files/{id:int}")]
     public async Task<IActionResult> GetById(int id)
     {
+        if (!(await CanAccessFile(id))) return Forbid();
+
         var file = await _fileService.GetFileByIdAsync(id);
         if (file == null)
             return NotFound(new { message = $"Document file with ID '{id}' was not found." });
@@ -62,6 +83,8 @@ public class DocumentFilesController : ControllerBase
     [HttpGet("document-files/{id:int}/download")]
     public async Task<IActionResult> Download(int id)
     {
+        if (!(await CanAccessFile(id))) return Forbid();
+
         var downloadResult = await _fileService.DownloadFileAsync(id);
         if (downloadResult == null)
             return NotFound(new { message = $"Document file with ID '{id}' was not found." });
@@ -76,6 +99,8 @@ public class DocumentFilesController : ControllerBase
     [HttpDelete("document-files/{id:int}")]
     public async Task<IActionResult> Delete(int id)
     {
+        if (!(await CanAccessFile(id))) return Forbid();
+
         var success = await _fileService.DeleteFileAsync(id);
         if (!success)
             return NotFound(new { message = $"Document file with ID '{id}' was not found." });
@@ -89,6 +114,8 @@ public class DocumentFilesController : ControllerBase
     [HttpPut("document-files/{id:int}/status")]
     public async Task<IActionResult> UpdateStatus(int id, [FromQuery] string status)
     {
+        if (!(RequestAccess.IsInternal(HttpContext, _config) || RequestAccess.IsStaff(User))) return Forbid();
+
         if (string.IsNullOrWhiteSpace(status))
             return BadRequest(new { message = "status query parameter is required." });
 
@@ -105,6 +132,8 @@ public class DocumentFilesController : ControllerBase
     [HttpPost("documentation-requests/{requestId:int}/sample-file")]
     public async Task<IActionResult> UploadSample(int requestId, [FromQuery] string sampleName)
     {
+        if (!(await CanAccess(requestId))) return Forbid();
+
         if (string.IsNullOrWhiteSpace(sampleName))
         {
             return BadRequest(new { message = "sampleName query parameter is required (e.g. NIC_Copy.pdf)." });
@@ -118,6 +147,7 @@ public class DocumentFilesController : ControllerBase
     /// Get list of available verified sample document templates.
     /// </summary>
     [HttpGet("document-files/sample-templates")]
+    [AllowAnonymous]
     public async Task<IActionResult> GetSampleTemplates()
     {
         var samples = await _fileService.GetAvailableSampleFilesAsync();

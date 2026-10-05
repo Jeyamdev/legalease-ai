@@ -759,14 +759,14 @@ export const ClerkCasesPage: React.FC = () => {
                           >
                             {f.documentStatus || "ACCEPTED"}
                           </span>
-                          <a
-                            href={`/api/document-files/${f.fileId}/download`}
-                            download
+                          <button
+                            type="button"
+                            onClick={() => void documentationApi.downloadFile(f.fileId, f.fileName)}
                             className="text-xs font-bold text-amber-700 bg-amber-50 hover:bg-amber-100 border border-amber-200 px-3 py-1 rounded-lg transition flex items-center gap-1"
                           >
                             <span>⬇️</span>
                             <span>Download</span>
-                          </a>
+                          </button>
                           <button
                             type="button"
                             onClick={() => openAskModal(f.fileName, f.fileId)}

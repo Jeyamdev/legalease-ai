@@ -83,18 +83,24 @@ public class DocumentFileService : IDocumentFileService
             throw new ArgumentException($"Documentation request with ID '{requestId}' was not found.");
         }
 
-        // Secure storage path
-        var uploadsFolder = Path.Combine(_environment.ContentRootPath, "Storage", "Uploads", "Documentation", requestId.ToString());
-        Directory.CreateDirectory(uploadsFolder);
-
         var tempFileId = Guid.NewGuid();
         var safeFileName = Path.GetFileName(file.FileName); // Strip any path traversal components
         var storedFileName = $"{tempFileId}{extension}";
-        var physicalPath = Path.Combine(uploadsFolder, storedFileName);
-
-        await using (var stream = new FileStream(physicalPath, FileMode.Create, FileAccess.Write, FileShare.None))
+        string physicalPath = string.Empty;
+        byte[]? contents = null;
+        if (_environment.IsDevelopment())
         {
+            var uploadsFolder = Path.Combine(_environment.ContentRootPath, "Storage", "Uploads", "Documentation", requestId.ToString());
+            Directory.CreateDirectory(uploadsFolder);
+            physicalPath = Path.Combine(uploadsFolder, storedFileName);
+            await using var stream = new FileStream(physicalPath, FileMode.Create, FileAccess.Write, FileShare.None);
             await file.CopyToAsync(stream);
+        }
+        else
+        {
+            await using var stream = new MemoryStream();
+            await file.CopyToAsync(stream);
+            contents = stream.ToArray();
         }
 
         var documentFile = new DocumentFile
@@ -102,6 +108,7 @@ public class DocumentFileService : IDocumentFileService
             RequestId = requestId,
             FileName = safeFileName,
             FilePath = physicalPath,
+            FileContents = contents,
             ContentType = contentType,
             FileSize = file.Length,
             DocumentStatus = "Received",
@@ -143,11 +150,13 @@ public class DocumentFileService : IDocumentFileService
     public async Task<(Stream fileStream, string contentType, string fileName)?> DownloadFileAsync(int fileId)
     {
         var file = await _context.DocumentFiles.FindAsync(fileId);
-        if (file == null || !File.Exists(file.FilePath))
+        if (file == null)
         {
             return null;
         }
-
+        if (file.FileContents is { Length: > 0 })
+            return (new MemoryStream(file.FileContents, writable: false), file.ContentType, file.FileName);
+        if (string.IsNullOrEmpty(file.FilePath) || !File.Exists(file.FilePath)) return null;
         var stream = new FileStream(file.FilePath, FileMode.Open, FileAccess.Read, FileShare.Read);
         return (stream, file.ContentType, file.FileName);
     }
@@ -160,7 +169,7 @@ public class DocumentFileService : IDocumentFileService
 
         try
         {
-            if (File.Exists(file.FilePath))
+            if (!string.IsNullOrEmpty(file.FilePath) && File.Exists(file.FilePath))
             {
                 File.Delete(file.FilePath);
             }
@@ -229,21 +238,26 @@ public class DocumentFileService : IDocumentFileService
         }
 
         var fileBytes = await File.ReadAllBytesAsync(sourcePath);
-        var uploadsFolder = Path.Combine(_environment.ContentRootPath, "Storage", "Uploads", "Documentation", requestId.ToString());
-        Directory.CreateDirectory(uploadsFolder);
-
         var extension = Path.GetExtension(cleanSampleName);
         var tempFileId = Guid.NewGuid();
         var storedFileName = $"{tempFileId}{extension}";
-        var physicalPath = Path.Combine(uploadsFolder, storedFileName);
-
-        await File.WriteAllBytesAsync(physicalPath, fileBytes);
+        string physicalPath = string.Empty;
+        byte[]? contents = null;
+        if (_environment.IsDevelopment())
+        {
+            var uploadsFolder = Path.Combine(_environment.ContentRootPath, "Storage", "Uploads", "Documentation", requestId.ToString());
+            Directory.CreateDirectory(uploadsFolder);
+            physicalPath = Path.Combine(uploadsFolder, storedFileName);
+            await File.WriteAllBytesAsync(physicalPath, fileBytes);
+        }
+        else contents = fileBytes;
 
         var documentFile = new DocumentFile
         {
             RequestId = requestId,
             FileName = cleanSampleName,
             FilePath = physicalPath,
+            FileContents = contents,
             ContentType = "application/pdf",
             FileSize = fileBytes.Length,
             DocumentStatus = "Received",

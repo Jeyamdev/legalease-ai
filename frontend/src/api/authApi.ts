@@ -65,6 +65,7 @@ export const authApi = {
   ): Promise<LoginResponse> => {
 
     authApi.logoutAll();
+    localStorage.removeItem("legalease_customer_user");
 
     const res = await apiClient.post<LoginResponse>(
       "/api/auth/login",

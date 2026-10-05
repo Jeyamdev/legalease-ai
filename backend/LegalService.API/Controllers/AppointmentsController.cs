@@ -11,7 +11,7 @@ namespace LegalService.API.Controllers;
 
 [ApiController]
 [Route("api/appointments")]
-[Authorize]
+[Authorize(Policy = "UserOrAi")]
 public class AppointmentsController : ControllerBase
 {
     private readonly IAppointmentService _appointmentService;

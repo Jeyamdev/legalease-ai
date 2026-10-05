@@ -353,7 +353,6 @@ export const DocumentationRequestDetailPage: React.FC = () => {
           try {
             await agentApi.submitApproval(
               wfId,
-              "15f92271-e0e6-42d8-bf12-cb4b71db3f05",
               "APPROVE",
               approvalComment
             );
@@ -385,7 +384,6 @@ export const DocumentationRequestDetailPage: React.FC = () => {
           try {
             await agentApi.submitApproval(
               wfId,
-              "15f92271-e0e6-42d8-bf12-cb4b71db3f05",
               "REJECT",
               approvalComment
             );
@@ -903,14 +901,13 @@ export const DocumentationRequestDetailPage: React.FC = () => {
                         }`}>
                           {file.documentStatus}
                         </span>
-                        <a
-                          href={documentationApi.getDownloadUrl(file.fileId)}
-                          target="_blank"
-                          rel="noreferrer"
+                        <button
+                          type="button"
+                          onClick={() => void documentationApi.downloadFile(file.fileId, file.fileName)}
                           className="text-amber-700 font-bold px-2.5 py-1 rounded-lg bg-amber-50 hover:bg-amber-100 border border-amber-200 transition-colors text-[11px]"
                         >
                           Download
-                        </a>
+                        </button>
                         <button
                           type="button"
                           onClick={() => openAskModal(file.fileName, file.fileId)}

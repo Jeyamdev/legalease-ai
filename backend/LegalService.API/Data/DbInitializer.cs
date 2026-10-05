@@ -215,15 +215,6 @@ public static class DbInitializer
 
             context.Users.Add(adminUser);
         }
-        else
-        {
-            adminUser.Role = "Admin";
-
-            adminUser.PasswordHash =
-                passwordService.HashPassword(adminPassword);
-
-            adminUser.UpdatedAt = DateTime.UtcNow;
-        }
 
         // ---------------------------------------------------------
         // 2. Ensure Clerk User
@@ -247,15 +238,6 @@ public static class DbInitializer
             };
 
             context.Users.Add(clerkUser);
-        }
-        else
-        {
-            clerkUser.Role = "Clerk";
-
-            clerkUser.PasswordHash =
-                passwordService.HashPassword(clerkPassword);
-
-            clerkUser.UpdatedAt = DateTime.UtcNow;
         }
 
         // Save first so UserId values exist.

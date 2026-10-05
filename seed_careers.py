@@ -1,6 +1,7 @@
+import os
 import psycopg2
 
-conn = psycopg2.connect("postgresql://neondb_owner:npg_ZYig0C9jhOHo@ep-late-heart-ay0bwalp.c-5.us-east-2.aws.neon.tech/neondb?sslmode=require")
+conn = psycopg2.connect(os.environ["DATABASE_URL"])
 cur = conn.cursor()
 
 # Remove the test 'string' row if it exists

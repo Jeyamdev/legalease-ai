@@ -134,8 +134,14 @@ export const documentationApi = {
     return res.data;
   },
 
-  getDownloadUrl: (fileId: string) => {
-    return `${apiClient.defaults.baseURL || "http://localhost:5000"}/api/document-files/${fileId}/download`;
+  downloadFile: async (fileId: string | number, fileName: string) => {
+    const res = await apiClient.get(`/api/document-files/${fileId}/download`, { responseType: "blob" });
+    const url = URL.createObjectURL(res.data);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = fileName;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   },
 
   updateFileStatus: async (fileId: string, status: string): Promise<DocumentFile> => {

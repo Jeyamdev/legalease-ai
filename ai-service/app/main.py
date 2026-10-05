@@ -16,15 +16,22 @@ Registers all routers and exposes:
 """
 
 import logging
+import os
+import secrets
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi import FastAPI, Depends, Header, HTTPException
 
 from app.config.settings import get_settings
 from app.services.backend_client import get_backend_client
 
 logger = logging.getLogger(__name__)
+
+
+async def require_backend_key(x_ai_service_key: str = Header(default="")) -> None:
+    expected = get_settings().ai_service_api_key
+    if not expected or not secrets.compare_digest(expected, x_ai_service_key):
+        raise HTTPException(status_code=401, detail="Internal authentication required")
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -56,22 +63,15 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
-    # ---- CORS ----
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=["*"],   # tighten in production
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
-
     # ---- Routes ----
     # Import here (after app creation) to avoid circular imports
     from app.api.routes.agent import router as agent_router
     from app.api.routes.component_routes import router as component_router
     from app.api.routes.scheduling_routes import router as scheduling_router
-    app.include_router(agent_router)
-    app.include_router(component_router)
-    app.include_router(scheduling_router)
+    protected = [Depends(require_backend_key)]
+    app.include_router(agent_router, dependencies=protected)
+    app.include_router(component_router, dependencies=protected)
+    app.include_router(scheduling_router, dependencies=protected)
 
 
     # ---- Health ----
@@ -90,17 +90,18 @@ def create_app() -> FastAPI:
 
     # ---- Interactive Agent Chat UI ----
     from fastapi.responses import HTMLResponse
-    from fastapi.staticfiles import StaticFiles
     import pathlib
 
     sample_docs_dir = pathlib.Path(__file__).parent.parent / "sample_documents"
     sample_docs_dir.mkdir(parents=True, exist_ok=True)
-    app.mount("/sample-documents", StaticFiles(directory=str(sample_docs_dir)), name="sample_documents")
+    # Sample files remain available to the agent internally, not as public URLs.
 
     @app.get("/", response_class=HTMLResponse, include_in_schema=False)
     @app.get("/chat", response_class=HTMLResponse, include_in_schema=False)
     async def chat_ui():
         """Interactive visual playground for testing the agentic chat workflow."""
+        if os.getenv("AI_STATE_STORE", "local").lower() == "backend":
+            raise HTTPException(status_code=404, detail="Not found")
         html_path = pathlib.Path(__file__).parent / "templates" / "chat.html"
         if html_path.exists():
             return HTMLResponse(content=html_path.read_text(encoding="utf-8"))

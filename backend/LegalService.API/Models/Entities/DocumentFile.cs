@@ -12,6 +12,8 @@ public class DocumentFile
 
     // Internal server storage path — never exposed to clients
     public string FilePath { get; set; } = string.Empty;
+    // Production uploads are stored durably in PostgreSQL (bytea).
+    public byte[]? FileContents { get; set; }
 
     // MIME type validated at upload time (e.g. application/pdf, image/jpeg)
     public string ContentType { get; set; } = string.Empty;

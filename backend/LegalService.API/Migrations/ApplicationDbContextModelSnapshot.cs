@@ -22,6 +22,16 @@ namespace LegalService.API.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
+            modelBuilder.Entity("LegalService.API.Models.Entities.AgentSessionState", b =>
+                {
+                    b.Property<string>("Kind").HasMaxLength(20).HasColumnType("character varying(20)");
+                    b.Property<string>("SessionId").HasMaxLength(64).HasColumnType("character varying(64)");
+                    b.Property<string>("StateJson").IsRequired().HasColumnType("jsonb");
+                    b.Property<DateTime>("UpdatedAt").HasColumnType("timestamp with time zone");
+                    b.HasKey("Kind", "SessionId");
+                    b.ToTable("AgentSessionStates");
+                });
+
             modelBuilder.Entity("LegalService.API.Models.Entities.AgentStep", b =>
                 {
                     b.Property<Guid>("StepId")
@@ -358,6 +368,9 @@ namespace LegalService.API.Migrations
                     b.Property<string>("FileName")
                         .IsRequired()
                         .HasColumnType("text");
+
+                    b.Property<byte[]>("FileContents")
+                        .HasColumnType("bytea");
 
                     b.Property<string>("FilePath")
                         .IsRequired()

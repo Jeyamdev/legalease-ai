@@ -3,11 +3,14 @@ using System.Threading.Tasks;
 using Microsoft.AspNetCore.Mvc;
 using LegalService.API.AgentIntegration;
 using LegalService.API.DTOs.Agent;
+using Microsoft.AspNetCore.Authorization;
+using System.Security.Claims;
 
 namespace LegalService.API.Controllers;
 
 [ApiController]
 [Route("api/agent")]
+[Authorize(Roles = "Admin,Clerk")]
 public class AgentController : ControllerBase
 {
     private readonly IAgentIntegrationService _agentService;
@@ -42,7 +45,6 @@ public class AgentController : ControllerBase
     [HttpPost("workflows/{workflowId}/approve")]
     public async Task<IActionResult> Approve(
         string workflowId,
-        [FromQuery] string? approverId,
         [FromBody] SubmitAgentApprovalRequest request)
     {
         if (string.IsNullOrWhiteSpace(workflowId))
@@ -54,10 +56,17 @@ public class AgentController : ControllerBase
         var result = await _agentService.SubmitApprovalDecisionAsync(
             workflowId,
             request.Decision,
-            approverId,
+            User.FindFirstValue(ClaimTypes.NameIdentifier),
             request.Comment);
 
         return Ok(result);
+    }
+
+    [HttpGet("request/{requestId:int}/status")]
+    public async Task<IActionResult> GetRequestStatus(int requestId, CancellationToken cancellationToken)
+    {
+        var result = await _agentService.GetRequestStatusAsync(requestId, cancellationToken);
+        return result is null ? NotFound() : Ok(result);
     }
 
     /// <summary>

@@ -1,5 +1,6 @@
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Authorization;
 using LegalService.API.DTOs.Requests;
 using LegalService.API.Interfaces;
 
@@ -7,6 +8,7 @@ namespace LegalService.API.Controllers;
 
 [ApiController]
 [Route("api/documentation-services")]
+[Authorize(Policy = "UserOrAi")]
 public class DocumentationServicesController : ControllerBase
 {
     private readonly IDocumentationServiceService _serviceManager;
@@ -43,6 +45,7 @@ public class DocumentationServicesController : ControllerBase
     /// Create a new documentation service.
     /// </summary>
     [HttpPost]
+    [Authorize(Roles = "Admin")]
     public async Task<IActionResult> Create([FromBody] CreateDocumentationServiceRequest request)
     {
         if (!ModelState.IsValid)
@@ -56,6 +59,7 @@ public class DocumentationServicesController : ControllerBase
     /// Update an existing documentation service.
     /// </summary>
     [HttpPut("{id:int}")]
+    [Authorize(Roles = "Admin")]
     public async Task<IActionResult> Update(int id, [FromBody] UpdateDocumentationServiceRequest request)
     {
         if (!ModelState.IsValid)
@@ -72,6 +76,7 @@ public class DocumentationServicesController : ControllerBase
     /// Deactivate/soft-delete a documentation service.
     /// </summary>
     [HttpDelete("{id:int}")]
+    [Authorize(Roles = "Admin")]
     public async Task<IActionResult> Deactivate(int id)
     {
         var success = await _serviceManager.DeactivateServiceAsync(id);

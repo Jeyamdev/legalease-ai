@@ -1,7 +1,8 @@
+import os
 import psycopg2
 import json
 
-DB_URL = "postgresql://neondb_owner:npg_ZYig0C9jhOHo@ep-late-heart-ay0bwalp.c-5.us-east-2.aws.neon.tech/neondb?sslmode=require"
+DB_URL = os.environ["DATABASE_URL"]
 
 def main():
     conn = psycopg2.connect(DB_URL)

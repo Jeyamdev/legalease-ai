@@ -15,6 +15,8 @@ public interface IAgentIntegrationService
     Task<CreateAgentChatSessionResponse?> CreateChatSessionAsync(string customerId);
     Task<SendAgentChatMessageResponse?> SendChatMessageAsync(string sessionId, string message, string? uploadedFileId, string? expectedType);
     Task<AgentChatSessionStatusResponse?> GetChatSessionStatusAsync(string sessionId);
+    Task<object?> GetChatMessagesAsync(string sessionId, CancellationToken cancellationToken = default);
+    Task<object?> GetRequestStatusAsync(int requestId, CancellationToken cancellationToken = default);
     Task<Dictionary<int, string>> GetChatClientNamesAsync();
 
     // Scheduling Agent Sessions
@@ -22,4 +24,3 @@ public interface IAgentIntegrationService
     Task<object?> SendSchedulingMessageAsync(string sessionId, string message, string? selectedLawyerId, string? selectedSlotId, string? selectedSlotTime, string? consultationType);
     Task<object?> GetSchedulingSessionStatusAsync(string sessionId);
 }
-

@@ -13,6 +13,9 @@ using Microsoft.IdentityModel.Tokens;
 using System.Security.Claims;
 using System.Text;
 using System.Text.Json;
+using Microsoft.AspNetCore.HttpOverrides;
+using System.Net;
+using System.Security.Cryptography;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -68,18 +71,21 @@ builder.Services.AddScoped<LegalService.API.Services.Scheduling.LawyerScheduleSe
 builder.Services.AddScoped<IAppointmentService, AppointmentService>();
 
 // Agentic AI Integration
-builder.Services.AddHttpClient<IAgentIntegrationService, AgentIntegrationService>();
+builder.Services.AddHttpClient<IAgentIntegrationService, AgentIntegrationService>(client =>
+    client.Timeout = TimeSpan.FromSeconds(120));
 
 // ================================================================
 // CORS Configuration
 // ================================================================
 builder.Services.AddCors(options =>
 {
-    options.AddPolicy("AllowAll", policy =>
+    options.AddPolicy("WebClient", policy =>
     {
-        policy.AllowAnyOrigin()
-              .AllowAnyMethod()
-              .AllowAnyHeader();
+        var origins = builder.Configuration.GetSection("Cors:Origins").Get<string[]>() ?? [];
+        if (builder.Environment.IsDevelopment() && origins.Length == 0)
+            origins = ["http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:5175", "http://127.0.0.1:5175"];
+        if (origins.Length > 0)
+            policy.WithOrigins(origins).AllowAnyMethod().AllowAnyHeader();
     });
 });
 
@@ -173,9 +179,25 @@ builder.Services.AddAuthentication(options =>
         }
     };
 });
-builder.Services.AddAuthorization();
+builder.Services.AddAuthorization(options =>
+{
+    options.AddPolicy("UserOrAi", policy => policy.RequireAssertion(context =>
+    {
+        if (context.User.Identity?.IsAuthenticated == true) return true;
+        if (context.Resource is not HttpContext http) return false;
+        var expected = builder.Configuration["AI_SERVICE_API_KEY"];
+        var received = http.Request.Headers["X-AI-Service-Key"].ToString();
+        return !string.IsNullOrEmpty(expected) && !string.IsNullOrEmpty(received) &&
+            CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(expected), Encoding.UTF8.GetBytes(received));
+    }));
+});
 
 var app = builder.Build();
+
+var forwarding = new ForwardedHeadersOptions { ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto };
+forwarding.KnownNetworks.Clear();
+forwarding.KnownProxies.Clear();
+app.UseForwardedHeaders(forwarding);
 
 if (args.Contains("--backfill-lawyer-schedules"))
 {
@@ -235,7 +257,7 @@ if (args.Contains("--seed-demo-lawyers") || args.Contains("--seed-demo-schedulin
 app.UseMiddleware<ExceptionMiddleware>();
 app.UseWhen(context => (context.Request.Path.StartsWithSegments("/api/lawyer-recommendations") || context.Request.Path.StartsWithSegments("/api/workforce-analysis") || context.Request.Path.StartsWithSegments("/api/careers") || context.Request.Path.StartsWithSegments("/api/workforce-settings") || context.Request.Path.StartsWithSegments("/api/clients") || context.Request.Path.StartsWithSegments("/api/dev/workforce-demo") || context.Request.Path.StartsWithSegments("/api/lawyers") || context.Request.Path.StartsWithSegments("/api/lawyer") || context.Request.Path.StartsWithSegments("/api/auth") || context.Request.Path.StartsWithSegments("/api/appointments")), branch => branch.UseExceptionHandler());
 
-if (app.Environment.IsDevelopment())
+if (app.Environment.IsDevelopment() || app.Configuration.GetValue<bool>("Swagger:Enabled"))
 {
     app.UseSwagger();
     app.UseSwaggerUI(c =>
@@ -244,7 +266,7 @@ if (app.Environment.IsDevelopment())
     });
 }
 
-app.UseCors("AllowAll");
+app.UseCors("WebClient");
 
 // Only redirect to HTTPS in production – in dev the HTTPS port is not configured,
 // causing mobile HTTP requests to hang on the 307 redirect.
@@ -257,6 +279,7 @@ app.UseAuthentication();   // Must be before UseAuthorization()
 app.UseAuthorization();
 
 app.MapControllers();
+app.MapGet("/health", () => Results.Ok(new { status = "ok" })).AllowAnonymous();
 app.MapWorkforceDemoEndpoints();
 
 if (!app.Configuration.GetValue<bool>("EfDesignTime"))

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { apiClient } from "../../api/apiClient";
+import { authApi } from "../../api/authApi";
 
 // ─── Customer session management ─────────────────────────────────────────────
 
@@ -23,7 +24,10 @@ export const customerAuth = {
     }
   },
   setUser: (user: CustomerUser) => localStorage.setItem(CUSTOMER_KEY, JSON.stringify(user)),
-  logout: () => localStorage.removeItem(CUSTOMER_KEY),
+  logout: () => {
+    localStorage.removeItem(CUSTOMER_KEY);
+    authApi.logoutAll();
+  },
   isLoggedIn: () => {
     const u = customerAuth.getUser();
     return !!(u && u.role?.toLowerCase() === "customer");
@@ -52,12 +56,18 @@ export const CustomerLoginPage: React.FC = () => {
     try {
       setLoading(true);
       setError(null);
-      const res = await apiClient.post<CustomerUser>("/api/auth/login", { email: email.trim(), password });
+      authApi.logoutAll();
+      const res = await apiClient.post<CustomerUser & { token?: string }>("/api/auth/login", { email: email.trim(), password });
       const role = res.data.role?.toLowerCase();
       if (role !== "customer") {
         setError("This portal is for customers only. Please use the staff login.");
         return;
       }
+      if (!('token' in res.data) || typeof res.data.token !== 'string' || !res.data.token) {
+        setError("The server did not provide a login token.");
+        return;
+      }
+      localStorage.setItem("token", res.data.token);
       customerAuth.setUser(res.data);
       navigate("/my-requests");
     } catch (err: any) {

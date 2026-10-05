@@ -1,0 +1,17 @@
+.git
+**/.env
+**/.env.local
+**/.venv
+**/venv
+**/__pycache__
+**/.pytest_cache
+**/node_modules
+**/bin
+**/obj
+**/build
+**/.dart_tool
+**/Storage/Uploads
+ai-service/data
+mobile
+frontend
+*.zip

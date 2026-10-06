@@ -25,8 +25,19 @@ class ApiConfig {
         : (saved ?? defaultBackendUrl);
   }
 
+  static String normalizeBackendUrl(String url) {
+    return url.trim().replaceAll(RegExp(r'/+      throw ArgumentError('Release API URL must use HTTPS.');
+    }
+    backendUrl.value = clean;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_backendPrefKey, clean);
+  }
+}
+), '');
+  }
+
   static Future<void> setBackendUrl(String url) async {
-    final clean = url.trim().replaceAll(RegExp(r'/$'), '');
+    final clean = normalizeBackendUrl(url);
     if (kReleaseMode && !clean.startsWith('https://')) {
       throw ArgumentError('Release API URL must use HTTPS.');
     }

@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'session_router.dart';
 import '../services/api_client.dart';
 import '../../config/app_theme.dart';
-import '../../config/api_config.dart';
 import '../../widgets/server_settings_dialog.dart';
 import '../screens/careers/careers_screen.dart';
 import 'auth_service.dart';

@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'session_router.dart';
 import '../services/api_client.dart';
-import 'package:http/http.dart' as http;
 import '../../config/app_theme.dart';
 import '../../config/api_config.dart';
 import '../../widgets/server_settings_dialog.dart';
@@ -43,29 +42,17 @@ class _LoginScreenState extends State<LoginScreen> {
       _serverStatus = _ServerStatus.checking;
       _serverStatusText = 'Checking server...';
     });
-    try {
-      final res = await http
-          .get(Uri.parse('${ApiConfig.backendUrl.value}/api/health'))
-          .timeout(const Duration(seconds: 5));
-      if (mounted) {
-        setState(() {
-          if (res.statusCode == 200 || res.statusCode == 401) {
-            _serverStatus = _ServerStatus.online;
-            _serverStatusText = 'Server connected';
-          } else {
-            _serverStatus = _ServerStatus.offline;
-            _serverStatusText = 'Server unavailable';
-          }
-        });
-      }
-    } catch (_) {
-      if (mounted) {
-        setState(() {
-          _serverStatus = _ServerStatus.offline;
-          _serverStatusText = 'Server unreachable — tap to configure';
-        });
-      }
-    }
+
+    final check = await ApiClient.checkServer();
+    if (!mounted) return;
+
+    setState(() {
+      _serverStatus =
+          check.isReachable ? _ServerStatus.online : _ServerStatus.offline;
+      _serverStatusText = check.isReachable
+          ? check.message
+          : '${check.message} — tap to configure';
+    });
   }
 
   @override

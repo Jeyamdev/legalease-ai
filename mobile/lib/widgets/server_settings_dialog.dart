@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
 import '../config/api_config.dart';
 import '../config/app_theme.dart';
+import '../services/api_client.dart';
 
 void showServerSettingsDialog(BuildContext context, {VoidCallback? onSaved}) {
   final controller = TextEditingController(text: ApiConfig.backendUrl.value);
@@ -12,15 +12,17 @@ void showServerSettingsDialog(BuildContext context, {VoidCallback? onSaved}) {
         bool testing = false;
         String? result;
         Future<void> runTest() async {
-          setState(() { testing = true; result = null; });
-          try {
-            final response = await http.get(Uri.parse('${controller.text.trim()}/health'))
-                .timeout(const Duration(seconds: 10));
-            result = 'ASP.NET API: HTTP ${response.statusCode}';
-          } catch (_) {
-            result = 'ASP.NET API is unreachable.';
+          setState(() {
+            testing = true;
+            result = null;
+          });
+          final check = await ApiClient.checkServer(baseUrl: controller.text);
+          result = check.message;
+          if (context.mounted) {
+            setState(() {
+              testing = false;
+            });
           }
-          setState(() { testing = false; });
         }
         return AlertDialog(
           title: const Text('Server Configuration'),

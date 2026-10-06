@@ -8,6 +8,9 @@ on:
     paths:
       - ".github/workflows/mobile-apk-release.yml"
 
+permissions:
+  contents: write
+
 jobs:
   build-apk:
     runs-on: ubuntu-latest
@@ -57,3 +60,12 @@ jobs:
           name: LegalEase-Mobile-v1.0.0
           path: LegalEase-Mobile-v1.0.0.apk
           if-no-files-found: error
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.0
+          name: LegalEase Mobile v1.0.0
+          body: Release APK configured to use the deployed LegalEase ASP.NET API.
+          files: LegalEase-Mobile-v1.0.0.apk
+          fail_on_unmatched_files: true

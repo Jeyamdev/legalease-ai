@@ -75,7 +75,7 @@ class ApiClient {
       }
       return ServerConnectionResult(
         ServerConnectionState.serverError,
-        'Server reachable (HTTP ' + response.statusCode.toString() + ')',
+        'Server reachable (HTTP ${response.statusCode})',
         response.statusCode,
       );
     } on TimeoutException {

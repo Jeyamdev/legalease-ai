@@ -288,6 +288,7 @@ using (var scope = app.Services.CreateScope())
     try
     {
         var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        await dbContext.Database.MigrateAsync();
         var passwordService = scope.ServiceProvider.GetRequiredService<LegalService.API.Authentication.Services.IPasswordService>();
         await DbInitializer.SeedCategoriesAsync(dbContext);
         await DbInitializer.SeedDocumentationServicesAsync(dbContext);

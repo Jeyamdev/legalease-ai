@@ -6,11 +6,100 @@ import 'package:http_parser/http_parser.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../config/api_config.dart';
 
+enum ServerConnectionState { connected, authRequired, notFound, serverError, unreachable, timeout, invalidUrl }
+
+class ServerConnectionResult {
+  final ServerConnectionState state;
+  final int? statusCode;
+  final String message;
+
+  const ServerConnectionResult(this.state, this.message, [this.statusCode]);
+
+  bool get isReachable => switch (state) {
+    ServerConnectionState.connected ||
+    ServerConnectionState.authRequired ||
+    ServerConnectionState.notFound ||
+    ServerConnectionState.serverError => true,
+    _ => false,
+  };
+}
+
 class ApiClient {
   static Future<void> Function()? onSessionExpired;
   static http.Client client = http.Client();
   static const String _tokenKey = 'auth_token';
   static const Duration requestTimeout = Duration(seconds: 60);
+
+  static Future<ServerConnectionResult> checkServer({String? baseUrl}) async {
+    final normalized = ApiConfig.normalizeBackendUrl(baseUrl ?? ApiConfig.backendUrl.value);
+    final uri = Uri.tryParse(normalized);
+    if (uri == null || !uri.hasScheme || uri.host.isEmpty) {
+      return const ServerConnectionResult(
+        ServerConnectionState.invalidUrl,
+        'Invalid server URL.',
+      );
+    }
+
+    try {
+      final response = await client
+          .get(Uri.parse('$normalized/health'))
+          .timeout(const Duration(seconds: 30));
+
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        return ServerConnectionResult(
+          ServerConnectionState.connected,
+          'Server connected',
+          response.statusCode,
+        );
+      }
+      if (response.statusCode == 401 || response.statusCode == 403) {
+        return ServerConnectionResult(
+          ServerConnectionState.authRequired,
+          'Server reachable, authentication required',
+          response.statusCode,
+        );
+      }
+      if (response.statusCode == 404) {
+        return ServerConnectionResult(
+          ServerConnectionState.notFound,
+          'Server reachable, health endpoint not found',
+          response.statusCode,
+        );
+      }
+      if (response.statusCode >= 500) {
+        return ServerConnectionResult(
+          ServerConnectionState.serverError,
+          'Server reachable, but server returned an error',
+          response.statusCode,
+        );
+      }
+      return ServerConnectionResult(
+        ServerConnectionState.serverError,
+        'Server reachable (HTTP ' + response.statusCode.toString() + ')',
+        response.statusCode,
+      );
+    } on TimeoutException {
+      return const ServerConnectionResult(
+        ServerConnectionState.timeout,
+        'Connection timed out',
+      );
+    } on SocketException {
+      return const ServerConnectionResult(
+        ServerConnectionState.unreachable,
+        'Cannot reach server',
+      );
+    } on http.ClientException {
+      return const ServerConnectionResult(
+        ServerConnectionState.unreachable,
+        'Cannot reach server',
+      );
+    } catch (_) {
+      return const ServerConnectionResult(
+        ServerConnectionState.unreachable,
+        'Cannot reach server',
+      );
+    }
+  }
 
   static Future<String?> getToken() async {
     final prefs = await SharedPreferences.getInstance();

@@ -80,7 +80,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
               _messages.add(ChatMessage.fromJson(item));
             }
           }
-          _sessionId = savedSessionId;
+          _sessionId = (savedSessionId != null && !savedSessionId.startsWith('session-local-') && savedSessionId.isNotEmpty) ? savedSessionId : null;
           _requestId = savedRequestId;
           _sessionStatus = savedStatus;
           return true;
@@ -143,7 +143,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
     try {
       if (!forceNew) {
         final restored = await _loadChatFromStorage();
-        if (restored && _messages.isNotEmpty) {
+        if (restored && _messages.isNotEmpty && _sessionId != null) {
           if (mounted) {
             setState(() => _initializing = false);
             _scrollToBottom();
@@ -189,19 +189,11 @@ class _AiChatScreenState extends State<AiChatScreen> {
       );
       await _saveChatToStorage();
     } catch (e) {
-      _sessionId = 'session-local-${DateTime.now().millisecondsSinceEpoch}';
-      _messages.add(
-        ChatMessage.agent(
-          'Welcome to the Document Agent (Document & Clerk AI). I can assist you with verifying legal documents, requirements check, and clerk workflows. How can I help today?',
-          options: [
-            'Rental & Lease Agreement',
-            'Business Registration',
-            'Power of Attorney',
-            'Property Transfer',
-            '📁 View All Services',
-          ],
-        ),
-      );
+      _sessionId = null;
+      _messages.add(ChatMessage.agent(
+        'Unable to start a Document Agent session: $e. Please try again when the service is available.',
+        isError: true,
+      ));
     } finally {
       if (mounted) setState(() => _initializing = false);
     }
@@ -221,12 +213,13 @@ class _AiChatScreenState extends State<AiChatScreen> {
     }
 
     try {
-      if (_sessionId == null) {
-        await _initSession();
+      if (_sessionId == null || _sessionId!.startsWith('session-local-')) {
+        await _initSession(forceNew: true);
       }
-
-      final activeSessionId = _sessionId ?? 'session-local-${DateTime.now().millisecondsSinceEpoch}';
-      _sessionId = activeSessionId;
+      final activeSessionId = _sessionId;
+      if (activeSessionId == null || activeSessionId.isEmpty) {
+        throw StateError('Could not establish an AI chat session. Please retry.');
+      }
 
       final res = await AgentChatService.sendMessage(
         sessionId: activeSessionId,
